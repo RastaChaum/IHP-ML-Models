@@ -216,25 +216,21 @@ The add-on supports the following configuration options:
 
 This add-on is designed to work with the [Intelligent Heating Pilot](https://github.com/RastaChaum/Intelligent-Heating-Pilot) custom component:
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                        Home Assistant                               │
-│  ┌──────────────────────┐       ┌───────────────────────────────┐  │
-│  │   IHP Integration    │       │    IHP-ML-Models Add-on       │  │
-│  │   (Custom Component) │       │                               │  │
-│  │                      │──────>│  ┌─────────────────────────┐  │  │
-│  │  - Sensor exposure   │ HTTP  │  │  XGBoost ML Engine      │  │  │
-│  │  - Business logic    │<──────│  │  - Training             │  │  │
-│  │  - LHS fallback      │       │  │  - Prediction           │  │  │
-│  └──────────────────────┘       │  └─────────────────────────┘  │  │
-│                                 │            │                   │  │
-│                                 │            v                   │  │
-│                                 │  ┌─────────────────────────┐  │  │
-│                                 │  │  HA History API Client  │──┼──│──> HA REST API
-│                                 │  │  (fetch sensor history) │  │  │
-│                                 │  └─────────────────────────┘  │  │
-│                                 └───────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+```mermaid
+C4Context
+    title IHP-ML-Models Integration Architecture
+
+    System_Boundary(ha, "Home Assistant") {
+        Container(ihp, "IHP Integration", "Custom Component", "Sensor exposure, Business logic, LHS fallback")
+        Container(addon, "IHP-ML-Models Add-on", "Docker Container", "XGBoost ML Engine for training and prediction")
+        ContainerDb(ha_db, "HA History", "Database", "Historical sensor data")
+    }
+
+    Rel(ihp, addon, "Train/Predict", "HTTP API")
+    Rel(addon, ihp, "Predictions", "HTTP Response")
+    Rel(addon, ha_db, "Fetch history", "HA REST API")
+
+    UpdateLayoutConfig($c4ShapeInRow="2", $c4BoundaryInRow="1")
 ```
 
 ### Communication Flow

@@ -209,8 +209,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     ) -> list[TrainingDataPoint]:
         """Extract heating cycles from historical data.
 
-        This method identifies when heating started and ended,
-        and calculates the duration and conditions for each cycle.
+        A heating cycle is defined as:
+        - START: Heating is ON AND temperature delta (target - current) > 0.2°C
+        - END: Heating is OFF OR temperature delta <= 0.2°C OR current temp exceeds target
 
         Args:
             history_data: Dictionary of entity_id -> history records
@@ -223,6 +224,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             List of TrainingDataPoint objects
         """
+        # Temperature threshold for cycle detection (in °C)
+        TEMP_DELTA_THRESHOLD = 0.2
+
         data_points: list[TrainingDataPoint] = []
 
         # Get heating state history
@@ -231,6 +235,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             _LOGGER.warning("No heating state history found for %s", heating_state_entity_id)
             return data_points
 
+        # Get temperature histories for cycle end detection
+        indoor_temp_history = history_data.get(indoor_temp_entity_id, [])
+        target_temp_history = history_data.get(target_temp_entity_id, [])
+
         # Track heating cycles
         heating_start: datetime | None = None
         start_indoor_temp: float | None = None
@@ -238,7 +246,48 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         start_humidity: float | None = None
         start_target_temp: float | None = None
 
-        for i, state_record in enumerate(heating_states):
+        def reset_cycle() -> None:
+            """Reset cycle tracking variables."""
+            nonlocal heating_start, start_indoor_temp, start_outdoor_temp
+            nonlocal start_humidity, start_target_temp
+            heating_start = None
+            start_indoor_temp = None
+            start_outdoor_temp = None
+            start_humidity = None
+            start_target_temp = None
+
+        def record_cycle(end_timestamp: datetime) -> None:
+            """Record a completed heating cycle."""
+            nonlocal data_points
+            if heating_start is None:
+                return
+
+            duration_minutes = (end_timestamp - heating_start).total_seconds() / 60.0
+
+            # Only use cycles with valid data
+            if (
+                start_indoor_temp is not None
+                and start_outdoor_temp is not None
+                and start_target_temp is not None
+                and duration_minutes > 0
+                and duration_minutes < 300  # Max 5 hours for a single cycle
+            ):
+                try:
+                    data_point = TrainingDataPoint(
+                        outdoor_temp=start_outdoor_temp,
+                        indoor_temp=start_indoor_temp,
+                        target_temp=start_target_temp,
+                        humidity=start_humidity or 50.0,
+                        hour_of_day=heating_start.hour,
+                        day_of_week=heating_start.weekday(),
+                        heating_duration_minutes=duration_minutes,
+                        timestamp=heating_start,
+                    )
+                    data_points.append(data_point)
+                except ValueError as e:
+                    _LOGGER.debug("Skipping invalid data point: %s", e)
+
+        for state_record in heating_states:
             state = state_record.get("state", "").lower()
             timestamp_str = state_record.get("last_changed") or state_record.get("last_updated")
 
@@ -252,62 +301,58 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
             is_heating = state in ("on", "heat", "heating", "true", "1")
 
-            if is_heating and heating_start is None:
-                # Heating cycle started
-                heating_start = timestamp
-                start_indoor_temp = self._get_value_at_time(
-                    history_data.get(indoor_temp_entity_id, []),
-                    timestamp,
-                )
-                start_outdoor_temp = self._get_value_at_time(
-                    history_data.get(outdoor_temp_entity_id, []),
-                    timestamp,
-                )
-                start_target_temp = self._get_value_at_time(
-                    history_data.get(target_temp_entity_id, []),
-                    timestamp,
-                )
-                if humidity_entity_id:
-                    start_humidity = self._get_value_at_time(
-                        history_data.get(humidity_entity_id, []),
-                        timestamp,
-                    )
-                else:
-                    start_humidity = 50.0  # Default humidity
+            # Get current temperatures at this timestamp
+            current_indoor = self._get_value_at_time(indoor_temp_history, timestamp)
+            current_target = self._get_value_at_time(target_temp_history, timestamp)
 
-            elif not is_heating and heating_start is not None:
-                # Heating cycle ended
-                duration_minutes = (timestamp - heating_start).total_seconds() / 60.0
-
-                # Only use cycles with valid data
-                if (
-                    start_indoor_temp is not None
-                    and start_outdoor_temp is not None
-                    and start_target_temp is not None
-                    and duration_minutes > 0
-                    and duration_minutes < 300  # Max 5 hours for a single cycle
-                ):
-                    try:
-                        data_point = TrainingDataPoint(
-                            outdoor_temp=start_outdoor_temp,
-                            indoor_temp=start_indoor_temp,
-                            target_temp=start_target_temp,
-                            humidity=start_humidity or 50.0,
-                            hour_of_day=heating_start.hour,
-                            day_of_week=heating_start.weekday(),
-                            heating_duration_minutes=duration_minutes,
-                            timestamp=heating_start,
+            if heating_start is None:
+                # Not in a cycle - check if we should start one
+                if is_heating and current_indoor is not None and current_target is not None:
+                    temp_delta = current_target - current_indoor
+                    if temp_delta > TEMP_DELTA_THRESHOLD:
+                        # Start a heating cycle
+                        heating_start = timestamp
+                        start_indoor_temp = current_indoor
+                        start_target_temp = current_target
+                        start_outdoor_temp = self._get_value_at_time(
+                            history_data.get(outdoor_temp_entity_id, []),
+                            timestamp,
                         )
-                        data_points.append(data_point)
-                    except ValueError as e:
-                        _LOGGER.debug("Skipping invalid data point: %s", e)
+                        if humidity_entity_id:
+                            start_humidity = self._get_value_at_time(
+                                history_data.get(humidity_entity_id, []),
+                                timestamp,
+                            )
+                        else:
+                            start_humidity = 50.0  # Default humidity
+            else:
+                # Currently in a cycle - check if we should end it
+                cycle_ended = False
+                end_reason = ""
 
-                # Reset for next cycle
-                heating_start = None
-                start_indoor_temp = None
-                start_outdoor_temp = None
-                start_humidity = None
-                start_target_temp = None
+                if not is_heating:
+                    # Heating turned off
+                    cycle_ended = True
+                    end_reason = "heating_off"
+                elif current_indoor is not None and current_target is not None:
+                    temp_delta = current_target - current_indoor
+                    if temp_delta <= TEMP_DELTA_THRESHOLD:
+                        # Target reached (within threshold)
+                        cycle_ended = True
+                        end_reason = "target_reached"
+                    elif current_indoor > current_target:
+                        # Temperature exceeded target
+                        cycle_ended = True
+                        end_reason = "target_exceeded"
+
+                if cycle_ended:
+                    _LOGGER.debug(
+                        "Heating cycle ended at %s (reason: %s)",
+                        timestamp.isoformat(),
+                        end_reason,
+                    )
+                    record_cycle(timestamp)
+                    reset_cycle()
 
         _LOGGER.info("Extracted %d heating cycles", len(data_points))
         return data_points
