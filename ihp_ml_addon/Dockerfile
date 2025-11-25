@@ -34,11 +34,9 @@ COPY rootfs /
 # Set working directory
 WORKDIR /app
 
-# Make run script executable
-RUN chmod a+x /scripts/run.sh
+# Make service scripts executable
+RUN chmod a+x /etc/services.d/ihp-ml/run \
+    && chmod a+x /etc/services.d/ihp-ml/finish
 
 # Expose HTTP API port
 EXPOSE 5000
-
-# Set entrypoint
-CMD ["/scripts/run.sh"]
