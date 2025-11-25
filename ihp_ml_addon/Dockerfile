@@ -1,20 +1,31 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:trixie
 FROM ${BUILD_FROM}
 
 # Set shell options
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install system dependencies for XGBoost
-RUN apk add --no-cache \
-    python3-dev \
-    py3-pip \
-    build-base \
-    libgomp \
-    openblas-dev
+# Install system dependencies for XGBoost (Debian base)
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-dev \
+        python3-venv \
+        build-essential \
+        libgomp1 \
+        libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create and use a virtual environment to avoid PEP 668 restrictions
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel setuptools \
+    && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm -rf /tmp/requirements.txt
 
 # Copy application code
 COPY rootfs /
