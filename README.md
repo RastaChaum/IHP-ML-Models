@@ -88,6 +88,7 @@ curl http://homeassistant:5000/api/v1/status
 | GET | `/api/v1/status` | Service status and model info |
 | POST | `/api/v1/train` | Train model with provided data |
 | POST | `/api/v1/train/fake` | Train model with generated fake data |
+| POST | `/api/v1/train/device` | Train model using HA historical data |
 | POST | `/api/v1/predict` | Make heating duration prediction |
 | GET | `/api/v1/models` | List all models |
 | GET | `/api/v1/models/{id}` | Get model details |
@@ -95,7 +96,40 @@ curl http://homeassistant:5000/api/v1/status
 
 ### Request/Response Examples
 
-#### Training Request
+#### Training with Device Configuration (from IHP component)
+
+This endpoint is used by the IHP component to request training with historical data from Home Assistant.
+
+```bash
+curl -X POST http://homeassistant:5000/api/v1/train/device \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "ihp_salon",
+    "indoor_temp_entity_id": "sensor.salon_temperature",
+    "outdoor_temp_entity_id": "sensor.outdoor_temperature",
+    "target_temp_entity_id": "climate.vtherm_salon",
+    "heating_state_entity_id": "climate.vtherm_salon",
+    "humidity_entity_id": "sensor.salon_humidity",
+    "history_days": 30
+  }'
+```
+
+Response:
+```json
+{
+  "success": true,
+  "device_id": "ihp_salon",
+  "model_id": "xgb_a1b2c3d4",
+  "created_at": "2024-01-15T06:15:00",
+  "training_samples": 245,
+  "metrics": {
+    "rmse": 3.5,
+    "r2": 0.92
+  }
+}
+```
+
+#### Training Request (manual data)
 ```json
 {
   "data_points": [
@@ -183,14 +217,43 @@ The add-on supports the following configuration options:
 This add-on is designed to work with the [Intelligent Heating Pilot](https://github.com/RastaChaum/Intelligent-Heating-Pilot) custom component:
 
 ```
-IHP Custom Component --(HTTP)--> IHP ML Models Add-on
-                                      |
-                                      v
-                                  XGBoost
-                                (train & predict)
+┌────────────────────────────────────────────────────────────────────┐
+│                        Home Assistant                               │
+│  ┌──────────────────────┐       ┌───────────────────────────────┐  │
+│  │   IHP Integration    │       │    IHP-ML-Models Add-on       │  │
+│  │   (Custom Component) │       │                               │  │
+│  │                      │──────>│  ┌─────────────────────────┐  │  │
+│  │  - Sensor exposure   │ HTTP  │  │  XGBoost ML Engine      │  │  │
+│  │  - Business logic    │<──────│  │  - Training             │  │  │
+│  │  - LHS fallback      │       │  │  - Prediction           │  │  │
+│  └──────────────────────┘       │  └─────────────────────────┘  │  │
+│                                 │            │                   │  │
+│                                 │            v                   │  │
+│                                 │  ┌─────────────────────────┐  │  │
+│                                 │  │  HA History API Client  │──┼──│──> HA REST API
+│                                 │  │  (fetch sensor history) │  │  │
+│                                 │  └─────────────────────────┘  │  │
+│                                 └───────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-The IHP component sends training data and prediction requests over HTTP to this add-on, which handles all ML operations.
+### Communication Flow
+
+1. **Training**: IHP sends device configuration (sensor entity IDs) → Add-on fetches history from HA → Trains XGBoost model
+2. **Prediction**: IHP sends current conditions → Add-on returns predicted heating duration
+3. **Fallback**: If addon unavailable, IHP uses LHS (Learning Heating Slope) as fallback
+
+### IHP Component Responsibilities
+- Integration with Home Assistant entities
+- Sensor exposure (predicted heating time, model status, etc.)
+- Business logic (when to start heating based on predictions)
+- LHS fallback when add-on is unavailable
+
+### Add-on Responsibilities
+- XGBoost model training from historical data
+- Heating duration predictions
+- Model persistence and versioning
+- Fetching historical data from HA REST API
 
 ## 📄 License
 

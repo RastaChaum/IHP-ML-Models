@@ -6,5 +6,8 @@ scikit-learn>=1.4.0,<2.0.0
 # Web framework for HTTP API
 flask>=3.0.0,<4.0.0
 
+# HTTP client for Home Assistant API
+requests>=2.31.0,<3.0.0
+
 # Utilities
 pydantic>=2.0.0,<3.0.0

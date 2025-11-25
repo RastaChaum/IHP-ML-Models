@@ -9,18 +9,23 @@ import logging
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 from functools import wraps
-from typing import Callable, Any
+from pathlib import Path
+from typing import Any, Callable
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, Response, jsonify, request
 
 # Add app directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from domain.value_objects import PredictionRequest, TrainingData, TrainingDataPoint
 from application.services import MLApplicationService
-from infrastructure.adapters import XGBoostTrainer, XGBoostPredictor, FileModelStorage
+from domain.value_objects import DeviceConfig, PredictionRequest, TrainingData, TrainingDataPoint
+from infrastructure.adapters import (
+    FileModelStorage,
+    HomeAssistantHistoryReader,
+    XGBoostPredictor,
+    XGBoostTrainer,
+)
 
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "info").upper()
@@ -38,7 +43,17 @@ model_path = Path(os.getenv("MODEL_PERSISTENCE_PATH", "/data/models"))
 storage = FileModelStorage(model_path)
 trainer = XGBoostTrainer(storage)
 predictor = XGBoostPredictor(storage)
-ml_service = MLApplicationService(trainer, predictor, storage)
+
+# Initialize Home Assistant history reader if we're running as an addon
+# The SUPERVISOR_TOKEN is automatically provided by Home Assistant
+ha_history_reader = None
+if os.getenv("SUPERVISOR_TOKEN"):
+    ha_history_reader = HomeAssistantHistoryReader()
+    _LOGGER.info("Home Assistant integration enabled via Supervisor API")
+else:
+    _LOGGER.info("Running in standalone mode (no Home Assistant integration)")
+
+ml_service = MLApplicationService(trainer, predictor, storage, ha_history_reader)
 
 
 def async_route(f: Callable) -> Callable:
@@ -173,6 +188,74 @@ async def train_with_fake_data() -> Response:
 
     except Exception as e:
         _LOGGER.exception("Error training with fake data")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/train/device", methods=["POST"])
+@async_route
+async def train_with_device_config() -> Response:
+    """Train a model using historical data from Home Assistant.
+
+    This endpoint receives device configuration from the IHP component
+    and fetches historical sensor data from Home Assistant to train a model.
+
+    Request body:
+    {
+        "device_id": str,
+        "indoor_temp_entity_id": str,
+        "outdoor_temp_entity_id": str,
+        "target_temp_entity_id": str,
+        "heating_state_entity_id": str,
+        "humidity_entity_id": str (optional),
+        "history_days": int (optional, default: 30)
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Check if HA integration is available
+        if not await ml_service.is_ha_available():
+            return jsonify({
+                "error": "Home Assistant integration not available. "
+                         "Ensure the addon is running with Supervisor access.",
+            }), 503
+
+        # Parse device configuration
+        try:
+            device_config = DeviceConfig(
+                device_id=data.get("device_id", ""),
+                indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
+                outdoor_temp_entity_id=data.get("outdoor_temp_entity_id", ""),
+                target_temp_entity_id=data.get("target_temp_entity_id", ""),
+                heating_state_entity_id=data.get("heating_state_entity_id", ""),
+                humidity_entity_id=data.get("humidity_entity_id"),
+                history_days=int(data.get("history_days", 30)),
+            )
+        except ValueError as e:
+            return jsonify({"error": f"Invalid device configuration: {e}"}), 400
+
+        # Train model using HA historical data
+        model_info = await ml_service.train_with_device_config(device_config)
+
+        return jsonify({
+            "success": True,
+            "device_id": device_config.device_id,
+            "model_id": model_info.model_id,
+            "created_at": model_info.created_at.isoformat(),
+            "training_samples": model_info.training_samples,
+            "metrics": model_info.metrics,
+        })
+
+    except ConnectionError as e:
+        _LOGGER.error("Failed to connect to Home Assistant: %s", e)
+        return jsonify({"error": f"Failed to connect to Home Assistant: {e}"}), 503
+    except ValueError as e:
+        _LOGGER.warning("Invalid training request: %s", e)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        _LOGGER.exception("Error training with device config")
         return jsonify({"error": str(e)}), 500
 
 
