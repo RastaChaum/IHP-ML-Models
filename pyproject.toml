@@ -1,0 +1,54 @@
+[tool.poetry]
+name = "ihp-ml-models"
+version = "0.1.0"
+description = "ML Dependency Installer Add-on for Home Assistant - XGBoost training and prediction for Intelligent Heating Pilot"
+authors = ["RastaChaum"]
+license = "MIT"
+readme = "README.md"
+packages = []
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+
+# ML dependencies
+xgboost = ">=2.0.0,<3.0.0"
+numpy = ">=1.26.0,<2.0.0"
+scikit-learn = ">=1.4.0,<2.0.0"
+
+# Web framework
+flask = ">=3.0.0,<4.0.0"
+
+# Utilities
+pydantic = ">=2.0.0,<3.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2"
+pytest-asyncio = "^0.23"
+ruff = "^0.6.0"
+mypy = "^1.10"
+
+[tool.poetry.group.test.dependencies]
+coverage = "^7.6"
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E203", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+strict_optional = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-q"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

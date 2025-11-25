@@ -1,0 +1,12 @@
+build_from:
+  amd64: "ghcr.io/home-assistant/amd64-base-python:3.13"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-python:3.13"
+  armv7: "ghcr.io/home-assistant/armv7-base-python:3.13"
+args:
+  BUILD_FROM: "ghcr.io/home-assistant/amd64-base-python:3.13"
+labels:
+  io.hass.type: addon
+  io.hass.name: IHP ML Models
+  io.hass.description: ML Dependency Installer Add-on for Intelligent Heating Pilot
+  io.hass.version: 0.1.0
+  maintainer: RastaChaum
