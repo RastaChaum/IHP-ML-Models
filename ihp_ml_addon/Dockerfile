@@ -15,6 +15,7 @@ RUN apt-get update \
         build-essential \
         libgomp1 \
         libopenblas-dev \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and use a virtual environment to avoid PEP 668 restrictions
