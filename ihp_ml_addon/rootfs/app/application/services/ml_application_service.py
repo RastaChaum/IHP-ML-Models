@@ -5,15 +5,21 @@ for ML training and prediction use cases.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from domain.interfaces import IMLModelTrainer, IMLModelPredictor, IModelStorage
-from domain.services import HeatingPredictionService, FakeDataGenerator
+from domain.interfaces import (
+    IHomeAssistantHistoryReader,
+    IMLModelPredictor,
+    IMLModelTrainer,
+    IModelStorage,
+)
+from domain.services import FakeDataGenerator, HeatingPredictionService
 from domain.value_objects import (
+    DeviceConfig,
+    ModelInfo,
     PredictionRequest,
     PredictionResult,
     TrainingData,
-    ModelInfo,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +37,7 @@ class MLApplicationService:
         trainer: IMLModelTrainer,
         predictor: IMLModelPredictor,
         storage: IModelStorage,
+        ha_history_reader: IHomeAssistantHistoryReader | None = None,
     ) -> None:
         """Initialize the ML application service.
 
@@ -38,6 +45,7 @@ class MLApplicationService:
             trainer: ML model trainer implementation
             predictor: ML model predictor implementation
             storage: Model storage implementation
+            ha_history_reader: Home Assistant history reader (optional)
         """
         self._prediction_service = HeatingPredictionService(
             trainer=trainer,
@@ -46,6 +54,7 @@ class MLApplicationService:
         )
         self._storage = storage
         self._fake_data_generator = FakeDataGenerator()
+        self._ha_history_reader = ha_history_reader
 
     async def train_with_data(self, training_data: TrainingData) -> ModelInfo:
         """Train a model with provided training data.
@@ -83,6 +92,68 @@ class MLApplicationService:
         _LOGGER.info("Generating %d fake training samples", num_samples)
         training_data = self._fake_data_generator.generate(num_samples)
         return await self.train_with_data(training_data)
+
+    async def train_with_device_config(self, device_config: DeviceConfig) -> ModelInfo:
+        """Train a model using historical data from Home Assistant.
+
+        This method fetches historical sensor data for the specified device
+        from Home Assistant and uses it to train a new model.
+
+        Args:
+            device_config: Device configuration with sensor entity IDs
+
+        Returns:
+            Information about the trained model
+
+        Raises:
+            RuntimeError: If Home Assistant history reader is not configured
+            ConnectionError: If unable to connect to Home Assistant
+            ValueError: If no valid training data found
+        """
+        if self._ha_history_reader is None:
+            raise RuntimeError(
+                "Home Assistant history reader not configured. "
+                "Cannot train with device configuration."
+            )
+
+        _LOGGER.info(
+            "Training model for device %s using %d days of history",
+            device_config.device_id,
+            device_config.history_days,
+        )
+
+        # Calculate time range
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=device_config.history_days)
+
+        # Fetch training data from Home Assistant
+        training_data = await self._ha_history_reader.fetch_training_data(
+            indoor_temp_entity_id=device_config.indoor_temp_entity_id,
+            outdoor_temp_entity_id=device_config.outdoor_temp_entity_id,
+            target_temp_entity_id=device_config.target_temp_entity_id,
+            heating_state_entity_id=device_config.heating_state_entity_id,
+            humidity_entity_id=device_config.humidity_entity_id,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        _LOGGER.info(
+            "Fetched %d training samples from Home Assistant for device %s",
+            training_data.size,
+            device_config.device_id,
+        )
+
+        return await self.train_with_data(training_data)
+
+    async def is_ha_available(self) -> bool:
+        """Check if Home Assistant integration is available.
+
+        Returns:
+            True if Home Assistant history reader is configured and reachable
+        """
+        if self._ha_history_reader is None:
+            return False
+        return await self._ha_history_reader.is_available()
 
     async def predict(self, request: PredictionRequest) -> PredictionResult:
         """Make a heating duration prediction.
@@ -123,10 +194,12 @@ class MLApplicationService:
         """
         ready = await self.is_ready()
         models = await self._storage.list_models()
+        ha_available = await self.is_ha_available()
 
         status = {
             "ready": ready,
             "model_count": len(models),
+            "ha_integration_available": ha_available,
             "timestamp": datetime.now().isoformat(),
         }
 

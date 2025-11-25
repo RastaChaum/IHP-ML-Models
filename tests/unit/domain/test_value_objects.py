@@ -7,12 +7,106 @@ import pytest
 from datetime import datetime
 
 from domain.value_objects import (
-    TrainingDataPoint,
-    TrainingData,
+    DeviceConfig,
+    ModelInfo,
     PredictionRequest,
     PredictionResult,
-    ModelInfo,
+    TrainingData,
+    TrainingDataPoint,
 )
+
+
+class TestDeviceConfig:
+    """Tests for DeviceConfig value object."""
+
+    def test_valid_device_config_creation(self) -> None:
+        """Test creating a valid device configuration."""
+        config = DeviceConfig(
+            device_id="ihp_salon",
+            indoor_temp_entity_id="sensor.salon_temperature",
+            outdoor_temp_entity_id="sensor.outdoor_temperature",
+            target_temp_entity_id="climate.vtherm_salon",
+            heating_state_entity_id="climate.vtherm_salon",
+            humidity_entity_id="sensor.salon_humidity",
+            history_days=30,
+        )
+        assert config.device_id == "ihp_salon"
+        assert config.indoor_temp_entity_id == "sensor.salon_temperature"
+        assert config.outdoor_temp_entity_id == "sensor.outdoor_temperature"
+        assert config.target_temp_entity_id == "climate.vtherm_salon"
+        assert config.heating_state_entity_id == "climate.vtherm_salon"
+        assert config.humidity_entity_id == "sensor.salon_humidity"
+        assert config.history_days == 30
+
+    def test_device_config_without_humidity(self) -> None:
+        """Test creating a device configuration without humidity sensor."""
+        config = DeviceConfig(
+            device_id="ihp_chambre",
+            indoor_temp_entity_id="sensor.chambre_temperature",
+            outdoor_temp_entity_id="sensor.outdoor_temperature",
+            target_temp_entity_id="climate.vtherm_chambre",
+            heating_state_entity_id="climate.vtherm_chambre",
+        )
+        assert config.humidity_entity_id is None
+        assert config.history_days == 30  # Default value
+
+    def test_device_config_empty_device_id_raises_error(self) -> None:
+        """Test that empty device_id raises ValueError."""
+        with pytest.raises(ValueError, match="device_id cannot be empty"):
+            DeviceConfig(
+                device_id="",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+            )
+
+    def test_device_config_empty_indoor_temp_raises_error(self) -> None:
+        """Test that empty indoor_temp_entity_id raises ValueError."""
+        with pytest.raises(ValueError, match="indoor_temp_entity_id cannot be empty"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+            )
+
+    def test_device_config_history_days_too_low_raises_error(self) -> None:
+        """Test that history_days < 1 raises ValueError."""
+        with pytest.raises(ValueError, match="history_days must be at least 1"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                history_days=0,
+            )
+
+    def test_device_config_history_days_too_high_raises_error(self) -> None:
+        """Test that history_days > 365 raises ValueError."""
+        with pytest.raises(ValueError, match="history_days must be at most 365"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                history_days=400,
+            )
+
+    def test_device_config_is_immutable(self) -> None:
+        """Test that device configuration is immutable."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+        )
+        with pytest.raises(AttributeError):
+            config.device_id = "new_id"  # type: ignore
 
 
 class TestTrainingDataPoint:

@@ -1,7 +1,7 @@
 name: "IHP ML Models"
-version: "0.1.3"
+version: "0.2.0"
 slug: ihp_ml_models
-description: "ML Dependency Installer Add-on for Home Assistant. Provides XGBoost train and predict capabilities for the Intelligent Heating Pilot (IHP) integration."
+description: "ML Add-on for Home Assistant. Provides XGBoost training and prediction capabilities for the Intelligent Heating Pilot (IHP) integration. Can fetch historical sensor data from Home Assistant for model training."
 url: "https://github.com/RastaChaum/IHP-ML-Models"
 arch:
   - amd64
@@ -11,7 +11,7 @@ startup: application
 boot: auto
 init: false
 host_network: false
-homeassistant_api: false
+homeassistant_api: true
 ingress: false
 ports:
   5000/tcp: 5000

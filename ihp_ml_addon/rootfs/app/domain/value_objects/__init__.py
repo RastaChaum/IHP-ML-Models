@@ -4,15 +4,17 @@ Value objects are immutable data carriers that represent domain concepts.
 They have no identity and are compared by their attributes.
 """
 
-from .training_data import TrainingData, TrainingDataPoint
+from .device_config import DeviceConfig
+from .model_info import ModelInfo
 from .prediction_request import PredictionRequest
 from .prediction_result import PredictionResult
-from .model_info import ModelInfo
+from .training_data import TrainingData, TrainingDataPoint
 
 __all__ = [
-    "TrainingData",
-    "TrainingDataPoint",
+    "DeviceConfig",
+    "ModelInfo",
     "PredictionRequest",
     "PredictionResult",
-    "ModelInfo",
+    "TrainingData",
+    "TrainingDataPoint",
 ]
