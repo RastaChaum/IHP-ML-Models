@@ -1,0 +1,10 @@
+# ML dependencies
+xgboost>=2.0.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+scikit-learn>=1.4.0,<2.0.0
+
+# Web framework for HTTP API
+flask>=3.0.0,<4.0.0
+
+# Utilities
+pydantic>=2.0.0,<3.0.0

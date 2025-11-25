@@ -1,0 +1,166 @@
+"""XGBoost predictor adapter.
+
+Infrastructure adapter that implements IMLModelPredictor using XGBoost.
+"""
+
+import logging
+from datetime import datetime
+
+import numpy as np
+import xgboost as xgb
+
+from domain.interfaces import IMLModelPredictor, IModelStorage
+from domain.value_objects import PredictionRequest, PredictionResult
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class XGBoostPredictor(IMLModelPredictor):
+    """XGBoost implementation of ML model predictor.
+
+    This adapter uses trained XGBoost models to make
+    heating duration predictions.
+    """
+
+    def __init__(self, storage: IModelStorage) -> None:
+        """Initialize the XGBoost predictor.
+
+        Args:
+            storage: Model storage implementation
+        """
+        self._storage = storage
+        self._cached_model: tuple[str, xgb.XGBRegressor] | None = None
+
+    async def predict(self, request: PredictionRequest) -> PredictionResult:
+        """Make a prediction using XGBoost.
+
+        Args:
+            request: Prediction request with input features
+
+        Returns:
+            PredictionResult with the predicted value and metadata
+        """
+        # Determine which model to use
+        model_id = request.model_id
+        if model_id is None:
+            model_id = await self._storage.get_latest_model_id()
+            if model_id is None:
+                raise ValueError("No trained model available")
+
+        # Load model (use cache if available)
+        model, model_info = await self._get_model(model_id)
+
+        # Prepare features
+        features = self._prepare_features(request)
+
+        # Make prediction
+        prediction = model.predict(features)
+        predicted_value = float(prediction[0])
+
+        # Ensure non-negative prediction
+        predicted_value = max(0, predicted_value)
+
+        # Calculate confidence based on feature importance and data proximity
+        confidence = self._calculate_confidence(model, request)
+
+        # Generate reasoning
+        reasoning = (
+            f"Predicted {predicted_value:.1f} minutes to heat from "
+            f"{request.indoor_temp:.1f}°C to {request.target_temp:.1f}°C "
+            f"(outdoor: {request.outdoor_temp:.1f}°C, humidity: {request.humidity:.0f}%)"
+        )
+
+        return PredictionResult(
+            predicted_duration_minutes=predicted_value,
+            confidence=confidence,
+            model_id=model_id,
+            timestamp=datetime.now(),
+            reasoning=reasoning,
+        )
+
+    async def has_trained_model(self) -> bool:
+        """Check if a trained model is available.
+
+        Returns:
+            True if at least one trained model exists
+        """
+        latest_id = await self._storage.get_latest_model_id()
+        return latest_id is not None
+
+    async def _get_model(self, model_id: str) -> tuple[xgb.XGBRegressor, object]:
+        """Get model from cache or load from storage.
+
+        Args:
+            model_id: Model identifier
+
+        Returns:
+            Tuple of (model, model_info)
+        """
+        if self._cached_model is not None and self._cached_model[0] == model_id:
+            # Return cached model
+            model, model_info = await self._storage.load_model(model_id)
+            return self._cached_model[1], model_info
+
+        # Load from storage and cache
+        model, model_info = await self._storage.load_model(model_id)
+        self._cached_model = (model_id, model)
+        return model, model_info
+
+    def _prepare_features(self, request: PredictionRequest) -> np.ndarray:
+        """Prepare features array for prediction.
+
+        Args:
+            request: Prediction request
+
+        Returns:
+            Numpy array with features
+        """
+        temp_delta = request.target_temp - request.indoor_temp
+        features = [
+            request.outdoor_temp,
+            request.indoor_temp,
+            request.target_temp,
+            temp_delta,
+            request.humidity,
+            request.hour_of_day,
+            request.day_of_week,
+        ]
+        return np.array([features])
+
+    def _calculate_confidence(
+        self,
+        model: xgb.XGBRegressor,
+        request: PredictionRequest,
+    ) -> float:
+        """Calculate confidence score for the prediction.
+
+        This is a simplified confidence calculation.
+        In production, you might use uncertainty estimation methods.
+
+        Args:
+            model: XGBoost model
+            request: Prediction request
+
+        Returns:
+            Confidence score between 0 and 1
+        """
+        # Base confidence from model
+        base_confidence = 0.8
+
+        # Adjust based on temperature delta reasonableness
+        temp_delta = request.target_temp - request.indoor_temp
+        if temp_delta <= 0:
+            # Already at or above target, low confidence in prediction
+            return 0.5
+        elif temp_delta > 10:
+            # Large temperature delta, slightly lower confidence
+            base_confidence -= 0.1
+        elif temp_delta < 2:
+            # Small delta, might be noisy
+            base_confidence -= 0.05
+
+        # Adjust for extreme outdoor temperatures
+        if request.outdoor_temp < -10 or request.outdoor_temp > 35:
+            base_confidence -= 0.1
+
+        return max(0.3, min(1.0, base_confidence))
