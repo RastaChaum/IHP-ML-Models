@@ -6,12 +6,6 @@ These tests verify that value objects are immutable and properly validated.
 import pytest
 from datetime import datetime
 
-import sys
-from pathlib import Path
-
-# Add app directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "ihp_ml_addon" / "rootfs" / "app"))
-
 from domain.value_objects import (
     TrainingDataPoint,
     TrainingData,

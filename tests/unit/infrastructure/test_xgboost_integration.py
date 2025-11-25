@@ -2,14 +2,7 @@
 
 import pytest
 import tempfile
-import asyncio
-from pathlib import Path
 from datetime import datetime
-
-import sys
-
-# Add app directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "ihp_ml_addon" / "rootfs" / "app"))
 
 from domain.services import FakeDataGenerator
 from domain.value_objects import PredictionRequest
@@ -215,25 +208,25 @@ class TestFileModelStorage:
     async def test_get_latest_model_id(self, storage: FileModelStorage) -> None:
         """Test getting the latest model ID."""
         from domain.value_objects import ModelInfo
-        import time
+        from datetime import timedelta
         
         # Initially no models
         assert await storage.get_latest_model_id() is None
         
-        # Save models
+        # Save models with explicit timestamps to ensure deterministic ordering
+        base_time = datetime.now()
         for i in range(2):
             model_id = f"model_{i}"
             model_info = ModelInfo(
                 model_id=model_id,
-                created_at=datetime.now(),
+                created_at=base_time + timedelta(seconds=i),
                 training_samples=100,
                 feature_names=("f1",),
                 metrics={"rmse": 5.0},
             )
             await storage.save_model(model_id, {"test": i}, model_info)
-            time.sleep(0.01)  # Small delay to ensure different timestamps
         
-        # Latest should be the last one saved
+        # Latest should be the last one saved (model_1 has later timestamp)
         latest = await storage.get_latest_model_id()
         assert latest == "model_1"
 

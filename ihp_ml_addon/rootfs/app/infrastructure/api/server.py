@@ -42,15 +42,13 @@ ml_service = MLApplicationService(trainer, predictor, storage)
 
 
 def async_route(f: Callable) -> Callable:
-    """Decorator to run async functions in Flask routes."""
+    """Decorator to run async functions in Flask routes.
+    
+    Uses asyncio.run() for proper event loop lifecycle management.
+    """
     @wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(f(*args, **kwargs))
-        finally:
-            loop.close()
+        return asyncio.run(f(*args, **kwargs))
     return wrapper
 
 

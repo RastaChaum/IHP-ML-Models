@@ -29,7 +29,7 @@ class XGBoostPredictor(IMLModelPredictor):
             storage: Model storage implementation
         """
         self._storage = storage
-        self._cached_model: tuple[str, xgb.XGBRegressor] | None = None
+        self._cached_model: tuple[str, xgb.XGBRegressor, object] | None = None
 
     async def predict(self, request: PredictionRequest) -> PredictionResult:
         """Make a prediction using XGBoost.
@@ -96,14 +96,13 @@ class XGBoostPredictor(IMLModelPredictor):
         Returns:
             Tuple of (model, model_info)
         """
+        # Check cache first - avoid loading from storage if cached
         if self._cached_model is not None and self._cached_model[0] == model_id:
-            # Return cached model
-            model, model_info = await self._storage.load_model(model_id)
-            return self._cached_model[1], model_info
+            return self._cached_model[1], self._cached_model[2]
 
-        # Load from storage and cache
+        # Load full model and info from storage, then cache both
         model, model_info = await self._storage.load_model(model_id)
-        self._cached_model = (model_id, model)
+        self._cached_model = (model_id, model, model_info)
         return model, model_info
 
     def _prepare_features(self, request: PredictionRequest) -> np.ndarray:
