@@ -1,9 +1,9 @@
 build_from:
-  amd64: "ghcr.io/home-assistant/amd64-base-python:3.13"
-  aarch64: "ghcr.io/home-assistant/aarch64-base-python:3.13"
-  armv7: "ghcr.io/home-assistant/armv7-base-python:3.13"
+  amd64: "ghcr.io/home-assistant/amd64-base-debian:trixie"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-debian:trixie"
+  armv7: "ghcr.io/home-assistant/armv7-base-debian:trixie"
 args:
-  BUILD_FROM: "ghcr.io/home-assistant/amd64-base-python:3.13"
+  BUILD_FROM: "ghcr.io/home-assistant/amd64-base-debian:trixie"
 labels:
   io.hass.type: addon
   io.hass.name: IHP ML Models
