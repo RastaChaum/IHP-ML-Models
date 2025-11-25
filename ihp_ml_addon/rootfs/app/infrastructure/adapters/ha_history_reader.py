@@ -2,6 +2,11 @@
 
 Infrastructure adapter that implements IHomeAssistantHistoryReader
 using Home Assistant's REST API.
+
+Note: This adapter uses the synchronous requests library. While the methods
+are declared async to match the interface, they run synchronously within
+the Flask application context (which uses asyncio.run() for async routes).
+For a production system with high concurrency, consider using aiohttp.
 """
 
 import logging
@@ -23,6 +28,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
     This adapter connects to Home Assistant's REST API to fetch
     historical sensor data for training the ML model.
+
+    Note: Uses synchronous requests library. In async context, this will
+    block the current thread but is acceptable for Flask's threading model.
     """
 
     def __init__(

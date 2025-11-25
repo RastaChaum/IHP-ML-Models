@@ -224,6 +224,15 @@ async def train_with_device_config() -> Response:
 
         # Parse device configuration
         try:
+            # Safely parse history_days with validation
+            history_days_raw = data.get("history_days", 30)
+            try:
+                history_days = int(history_days_raw)
+            except (ValueError, TypeError):
+                return jsonify({
+                    "error": f"Invalid history_days value: {history_days_raw}"
+                }), 400
+
             device_config = DeviceConfig(
                 device_id=data.get("device_id", ""),
                 indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
@@ -231,7 +240,7 @@ async def train_with_device_config() -> Response:
                 target_temp_entity_id=data.get("target_temp_entity_id", ""),
                 heating_state_entity_id=data.get("heating_state_entity_id", ""),
                 humidity_entity_id=data.get("humidity_entity_id"),
-                history_days=int(data.get("history_days", 30)),
+                history_days=history_days,
             )
         except ValueError as e:
             return jsonify({"error": f"Invalid device configuration: {e}"}), 400
