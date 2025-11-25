@@ -8,5 +8,5 @@ labels:
   io.hass.type: addon
   io.hass.name: IHP ML Models
   io.hass.description: ML Dependency Installer Add-on for Intelligent Heating Pilot
-  io.hass.version: 0.1.0
+  io.hass.version: 0.1.1
   maintainer: RastaChaum
