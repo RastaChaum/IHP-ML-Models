@@ -47,9 +47,25 @@ predictor = XGBoostPredictor(storage)
 # Initialize Home Assistant history reader if we're running as an addon
 # The SUPERVISOR_TOKEN is automatically provided by Home Assistant
 ha_history_reader = None
-if os.getenv("SUPERVISOR_TOKEN"):
-    ha_history_reader = HomeAssistantHistoryReader()
-    _LOGGER.info("Home Assistant integration enabled via Supervisor API")
+supervisor_token = os.getenv("SUPERVISOR_TOKEN")
+supervisor_url = os.getenv("SUPERVISOR_URL")
+
+_LOGGER.info("="*60)
+_LOGGER.info("Home Assistant Configuration Check")
+_LOGGER.info("="*60)
+_LOGGER.info("SUPERVISOR_TOKEN present: %s", "YES" if supervisor_token else "NO")
+if supervisor_token:
+    _LOGGER.info("SUPERVISOR_TOKEN length: %d", len(supervisor_token))
+    _LOGGER.info("SUPERVISOR_TOKEN preview: %s...", supervisor_token[:20] if len(supervisor_token) > 20 else supervisor_token)
+_LOGGER.info("SUPERVISOR_URL: %s", supervisor_url or "(not set)")
+_LOGGER.info("="*60)
+
+if supervisor_token:
+    ha_history_reader = HomeAssistantHistoryReader(
+        ha_url=supervisor_url,
+        ha_token=supervisor_token
+    )
+    _LOGGER.info("Home Assistant integration enabled")
 else:
     _LOGGER.info("Running in standalone mode (no Home Assistant integration)")
 
@@ -387,6 +403,20 @@ def main() -> None:
     """Main entry point for the server."""
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "5000"))
+    
+    # Enable remote debugging if DEBUG_MODE is set
+    debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    if debug_mode:
+        try:
+            import debugpy
+            debugpy.listen(("0.0.0.0", 5678))
+            _LOGGER.info("🔍 Debugpy listening on port 5678 - waiting for debugger to attach...")
+            _LOGGER.info("💡 In VSCode: Run 'Python: Remote Attach (Docker)' debug configuration")
+            # Wait for debugger to attach
+            debugpy.wait_for_client()
+            _LOGGER.info("✅ Debugger attached!")
+        except Exception as e:
+            _LOGGER.warning("Failed to start debugpy: %s", e)
 
     _LOGGER.info("Starting IHP ML Models API server on %s:%d", host, port)
     _LOGGER.info("Model storage path: %s", model_path)

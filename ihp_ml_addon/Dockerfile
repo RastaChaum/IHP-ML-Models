@@ -28,15 +28,21 @@ RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel setuptools \
     && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm -rf /tmp/requirements.txt
 
-# Copy application code
-COPY rootfs /
+# Copy application code and S6 service definitions
+COPY rootfs/app /app
+COPY rootfs/scripts /scripts
+COPY rootfs/etc /etc
 
 # Set working directory
 WORKDIR /app
 
-# Make service scripts executable
-RUN chmod a+x /etc/services.d/ihp-ml/run \
+# Make scripts executable
+RUN chmod a+x /scripts/run.sh \
+    && chmod a+x /etc/services.d/ihp-ml/run \
     && chmod a+x /etc/services.d/ihp-ml/finish
 
 # Expose HTTP API port
 EXPOSE 5000
+
+# S6 overlay will automatically start services in /etc/services.d/
+# No need for explicit CMD - the base image handles it

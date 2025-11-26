@@ -161,10 +161,31 @@ Response:
 
 ## 🧪 Development
 
+### Local Testing Environment
+
+To test the addon locally with a Home Assistant instance:
+
+```bash
+# Start development environment
+./scripts/develop.sh
+
+# Run API tests
+./scripts/test-addon.sh
+
+# View logs
+docker-compose logs -f ihp-ml-addon
+
+# Clean up
+./scripts/clean.sh
+```
+
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete development guide.
+
 ### Prerequisites
 
 - Python 3.12+
 - Poetry (for dependency management)
+- Docker and Docker Compose (for local testing)
 
 ### Setup
 

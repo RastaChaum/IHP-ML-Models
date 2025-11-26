@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+echo "Starting devcontainer bootstrap for IHP ML Models addon..."
+
+# Create a local Home Assistant instance for testing
+if [ ! -d "/workspaces/test-homeassistant" ]; then
+    echo "Creating test Home Assistant configuration..."
+    mkdir -p /workspaces/test-homeassistant
+fi
+
+echo "Bootstrap complete!"
+echo ""
+echo "To test the addon locally:"
+echo "  1. Run: ./scripts/develop.sh"
+echo "  2. The addon will be available at http://localhost:5000"
+echo "  3. Home Assistant test instance at http://localhost:7123"

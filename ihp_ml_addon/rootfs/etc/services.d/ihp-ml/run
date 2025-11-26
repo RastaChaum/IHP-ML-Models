@@ -1,28 +1,50 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/with-contenv bash
 # shellcheck shell=bash
 set -e
 
-# Read configuration from options.json (Home Assistant add-on config)
-CONFIG_PATH=/data/options.json
-
-if [ -f "$CONFIG_PATH" ]; then
-    CONFIG_LOG_LEVEL=$(bashio::config 'log_level' 'info')
-    CONFIG_MODEL_PATH=$(bashio::config 'model_persistence_path' '/data/models')
-else
-    CONFIG_LOG_LEVEL="info"
-    CONFIG_MODEL_PATH="/data/models"
+# Check if bashio is available (Home Assistant add-on mode)
+BASHIO_AVAILABLE=false
+if command -v bashio::config &> /dev/null; then
+    BASHIO_AVAILABLE=true
 fi
 
-# Set environment variables
-export LOG_LEVEL="${CONFIG_LOG_LEVEL}"
-export MODEL_PERSISTENCE_PATH="${CONFIG_MODEL_PATH}"
+# Read configuration from options.json (Home Assistant add-on config) or environment
+CONFIG_PATH=/data/options.json
+
+if [ "$BASHIO_AVAILABLE" = true ] && [ -f "$CONFIG_PATH" ]; then
+    # Home Assistant add-on mode - use bashio
+    CONFIG_LOG_LEVEL=$(bashio::config 'log_level' 'info')
+    CONFIG_MODEL_PATH=$(bashio::config 'model_persistence_path' '/data/models')
+    
+    # Set environment variables
+    export LOG_LEVEL="${CONFIG_LOG_LEVEL}"
+    export MODEL_PERSISTENCE_PATH="${CONFIG_MODEL_PATH}"
+    
+    bashio::log.info "Starting IHP ML Models Add-on (HA mode)..."
+    bashio::log.info "Log level: ${LOG_LEVEL}"
+    bashio::log.info "Model path: ${MODEL_PERSISTENCE_PATH}"
+else
+    # Development mode - use environment variables or defaults
+    export LOG_LEVEL="${LOG_LEVEL:-info}"
+    export MODEL_PERSISTENCE_PATH="${MODEL_PERSISTENCE_PATH:-/data/models}"
+    
+    # SUPERVISOR_TOKEN and SUPERVISOR_URL come from Docker environment
+    # They should NOT be overridden here
+    
+    echo "========================================"
+    echo "IHP ML Models Add-on Starting (Dev mode)"
+    echo "========================================"
+    echo "Log level: ${LOG_LEVEL}"
+    echo "Model path: ${MODEL_PERSISTENCE_PATH}"
+    echo "Supervisor Token: ${SUPERVISOR_TOKEN:+***SET*** (${#SUPERVISOR_TOKEN} chars)}"
+    echo "Supervisor Token: ${SUPERVISOR_TOKEN:-NOT SET}"
+    echo "Supervisor URL: ${SUPERVISOR_URL:-not set}"
+    echo "========================================"
+    echo ""
+fi
 
 # Ensure model directory exists
 mkdir -p "${MODEL_PERSISTENCE_PATH}"
-
-bashio::log.info "Starting IHP ML Models Add-on..."
-bashio::log.info "Log level: ${LOG_LEVEL}"
-bashio::log.info "Model path: ${MODEL_PERSISTENCE_PATH}"
 
 # Start the Flask application
 cd /app

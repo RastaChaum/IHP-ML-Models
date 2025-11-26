@@ -68,20 +68,32 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             True if the addon can communicate with Home Assistant
         """
+        _LOGGER.info("=" * 60)
+        _LOGGER.info("Checking Home Assistant availability")
+        _LOGGER.info("Base URL: %s", self._ha_url)
+        _LOGGER.info("Token configured: %s", "YES" if self._ha_token else "NO")
+        _LOGGER.info("Token length: %d", len(self._ha_token) if self._ha_token else 0)
+        
         try:
             # Ensure base URL ends with / for proper urljoin behavior
             base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
             url = urljoin(base_url, "api/")
-            _LOGGER.debug("Checking HA availability at: %s", url)
+            _LOGGER.info("Final URL after urljoin: %s", url)
+            _LOGGER.debug("Request headers: %s", {k: v[:20] + "..." if k == "Authorization" and len(v) > 20 else v for k, v in self._get_headers().items()})
+            
             response = requests.get(
                 url,
                 headers=self._get_headers(),
                 timeout=self._timeout,
             )
-            _LOGGER.debug("HA availability check: status=%d", response.status_code)
+            _LOGGER.info("Response status: %d", response.status_code)
+            _LOGGER.debug("Response body: %s", response.text[:200] if response.text else "(empty)")
+            _LOGGER.info("=" * 60)
             return response.status_code == 200
         except requests.RequestException as e:
-            _LOGGER.warning("Home Assistant API not available: %s", e)
+            _LOGGER.error("Home Assistant API error: %s", e)
+            _LOGGER.error("Error type: %s", type(e).__name__)
+            _LOGGER.info("=" * 60)
             return False
 
     async def fetch_training_data(
@@ -157,6 +169,89 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     ) -> dict[str, list[dict[str, Any]]]:
         """Fetch history data for multiple entities.
 
+        Home Assistant limits responses to ~4000 records. This method automatically
+        splits large time ranges into smaller chunks and merges the results.
+
+        Args:
+            entity_ids: List of entity IDs to fetch
+            start_time: Start of time range
+            end_time: End of time range
+
+        Returns:
+            Dictionary mapping entity_id to list of state records
+        """
+        from datetime import timedelta
+
+        # Calculate time range
+        total_days = (end_time - start_time).days
+        
+        # If period is less than 7 days, fetch in one request
+        if total_days <= 7:
+            return await self._fetch_history_chunk(entity_ids, start_time, end_time)
+        
+        # Otherwise, split into weekly chunks to avoid HA API limits
+        _LOGGER.info(
+            "Fetching %d days of history in chunks to avoid API limits...",
+            total_days,
+        )
+        
+        chunk_size_days = 7
+        result: dict[str, list[dict[str, Any]]] = {}
+        
+        current_start = start_time
+        chunk_num = 0
+        
+        while current_start < end_time:
+            chunk_num += 1
+            current_end = min(current_start + timedelta(days=chunk_size_days), end_time)
+            
+            _LOGGER.debug(
+                "Fetching chunk %d: %s to %s (%d days)",
+                chunk_num,
+                current_start.isoformat(),
+                current_end.isoformat(),
+                (current_end - current_start).days,
+            )
+            
+            # Fetch this chunk
+            chunk_data = await self._fetch_history_chunk(
+                entity_ids,
+                current_start,
+                current_end,
+            )
+            
+            # Merge with accumulated results
+            for entity_id, records in chunk_data.items():
+                if entity_id not in result:
+                    result[entity_id] = []
+                result[entity_id].extend(records)
+            
+            # Move to next chunk
+            current_start = current_end
+        
+        # Sort all entities chronologically after merging
+        for entity_id in result:
+            result[entity_id] = sorted(
+                result[entity_id],
+                key=lambda x: x.get("last_changed") or x.get("last_updated") or "",
+            )
+            _LOGGER.info(
+                "Entity %s: %d total records after merging %d chunks",
+                entity_id,
+                len(result[entity_id]),
+                chunk_num,
+            )
+        
+        return result
+
+    async def _fetch_history_chunk(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch a single chunk of history data.
+
         Args:
             entity_ids: List of entity IDs to fetch
             start_time: Start of time range
@@ -179,7 +274,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             f"&filter_entity_id={entity_filter}&minimal_response",
         )
 
-        _LOGGER.debug("Fetching history from: %s", url)
+        _LOGGER.debug("Fetching history chunk from: %s", url)
 
         try:
             response = requests.get(
@@ -190,16 +285,28 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             response.raise_for_status()
             history_list = response.json()
         except requests.RequestException as e:
-            _LOGGER.error("Failed to fetch history: %s", e)
+            _LOGGER.error("Failed to fetch history chunk: %s", e)
             raise ConnectionError(f"Failed to fetch history from Home Assistant: {e}") from e
 
-        # Convert list of entity histories to dictionary
+        # Convert list of entity histories to dictionary and sort chronologically
         result: dict[str, list[dict[str, Any]]] = {}
         for entity_history in history_list:
             if entity_history:
                 entity_id = entity_history[0].get("entity_id", "")
                 if entity_id:
-                    result[entity_id] = entity_history
+                    # Sort history by timestamp (chronological order)
+                    sorted_history = sorted(
+                        entity_history,
+                        key=lambda x: x.get("last_changed") or x.get("last_updated") or "",
+                    )
+                    result[entity_id] = sorted_history
+                    _LOGGER.debug(
+                        "Entity %s: %d records from %s to %s",
+                        entity_id,
+                        len(sorted_history),
+                        sorted_history[0].get("last_changed") if sorted_history else "N/A",
+                        sorted_history[-1].get("last_changed") if sorted_history else "N/A",
+                    )
 
         _LOGGER.debug("Fetched history for entities: %s", list(result.keys()))
         return result
@@ -244,6 +351,24 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         # Get temperature histories for cycle end detection
         indoor_temp_history = history_data.get(indoor_temp_entity_id, [])
         target_temp_history = history_data.get(target_temp_entity_id, [])
+
+        # Detect entity types to determine how to extract values
+        # Check if entities are climate entities (with attributes) or sensors (state only)
+        def is_climate_entity(entity_id: str) -> bool:
+            """Check if entity is a climate entity."""
+            return entity_id.startswith("climate.")
+
+        indoor_is_climate = is_climate_entity(indoor_temp_entity_id)
+        outdoor_is_climate = is_climate_entity(outdoor_temp_entity_id)
+        target_is_climate = is_climate_entity(target_temp_entity_id)
+        heating_is_climate = is_climate_entity(heating_state_entity_id)
+        humidity_is_climate = humidity_entity_id and is_climate_entity(humidity_entity_id)
+
+        _LOGGER.debug("Entity type detection:")
+        _LOGGER.debug("  Indoor temp: %s (climate=%s)", indoor_temp_entity_id, indoor_is_climate)
+        _LOGGER.debug("  Outdoor temp: %s (climate=%s)", outdoor_temp_entity_id, outdoor_is_climate)
+        _LOGGER.debug("  Target temp: %s (climate=%s)", target_temp_entity_id, target_is_climate)
+        _LOGGER.debug("  Heating state: %s (climate=%s)", heating_state_entity_id, heating_is_climate)
 
         # Track heating cycles
         heating_start: datetime | None = None
@@ -294,7 +419,6 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     _LOGGER.debug("Skipping invalid data point: %s", e)
 
         for state_record in heating_states:
-            state = state_record.get("state", "").lower()
             timestamp_str = state_record.get("last_changed") or state_record.get("last_updated")
 
             if not timestamp_str:
@@ -305,11 +429,41 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             except ValueError:
                 continue
 
-            is_heating = state in ("on", "heat", "heating", "true", "1")
+            # Determine if heating is ON
+            # For climate entities: check hvac_action in attributes OR state
+            is_heating = False
+            if heating_is_climate:
+                attributes = state_record.get("attributes", {})
+                hvac_action = attributes.get("hvac_action", "")
+                hvac_mode = attributes.get("hvac_mode", "")
+                state = state_record.get("state", "")
+                
+                # Heating is ON if hvac_action is 'heating' OR state is 'heat'/'heating'
+                is_heating = (
+                    (hvac_action and (hvac_action.lower() in ("heating", "on"))) or
+                    (state and state.lower() in ("heat", "heating")) or
+                    (hvac_mode and hvac_mode.lower() == "heat")
+                )
+            else:
+                # For binary_sensor or switch: check state
+                state = state_record.get("state", "").lower()
+                is_heating = state in ("on", "heat", "heating", "true", "1")
 
             # Get current temperatures at this timestamp
-            current_indoor = self._get_value_at_time(indoor_temp_history, timestamp)
-            current_target = self._get_value_at_time(target_temp_history, timestamp)
+            # Use appropriate attribute names for climate entities
+            if indoor_is_climate:
+                current_indoor = self._get_value_at_time(
+                    indoor_temp_history, timestamp, attribute_name="current_temperature"
+                )
+            else:
+                current_indoor = self._get_value_at_time(indoor_temp_history, timestamp)
+
+            if target_is_climate:
+                current_target = self._get_value_at_time(
+                    target_temp_history, timestamp, attribute_name="temperature"
+                )
+            else:
+                current_target = self._get_value_at_time(target_temp_history, timestamp)
 
             if heating_start is None:
                 # Not in a cycle - check if we should start one
@@ -320,15 +474,33 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         heating_start = timestamp
                         start_indoor_temp = current_indoor
                         start_target_temp = current_target
-                        start_outdoor_temp = self._get_value_at_time(
-                            history_data.get(outdoor_temp_entity_id, []),
-                            timestamp,
-                        )
-                        if humidity_entity_id:
-                            start_humidity = self._get_value_at_time(
-                                history_data.get(humidity_entity_id, []),
+                        
+                        # Get outdoor temperature
+                        if outdoor_is_climate:
+                            start_outdoor_temp = self._get_value_at_time(
+                                history_data.get(outdoor_temp_entity_id, []),
+                                timestamp,
+                                attribute_name="ext_current_temperature",
+                            )
+                        else:
+                            start_outdoor_temp = self._get_value_at_time(
+                                history_data.get(outdoor_temp_entity_id, []),
                                 timestamp,
                             )
+                        
+                        # Get humidity
+                        if humidity_entity_id:
+                            if humidity_is_climate:
+                                start_humidity = self._get_value_at_time(
+                                    history_data.get(humidity_entity_id, []),
+                                    timestamp,
+                                    attribute_name="humidity",
+                                )
+                            else:
+                                start_humidity = self._get_value_at_time(
+                                    history_data.get(humidity_entity_id, []),
+                                    timestamp,
+                                )
                         else:
                             start_humidity = 50.0  # Default humidity
             else:
@@ -367,12 +539,14 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self,
         history: list[dict[str, Any]],
         target_time: datetime,
+        attribute_name: str | None = None,
     ) -> float | None:
         """Get the sensor value at or before a specific time.
 
         Args:
             history: List of history records for the entity
             target_time: Time to find the value for
+            attribute_name: If provided, extract value from attributes (e.g., 'current_temperature')
 
         Returns:
             The sensor value as float, or None if not found
@@ -381,20 +555,33 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         closest_time: datetime | None = None
 
         for record in history:
-            state = record.get("state", "")
             timestamp_str = record.get("last_changed") or record.get("last_updated")
-
-            if not timestamp_str or state in ("unknown", "unavailable", ""):
+            if not timestamp_str:
                 continue
 
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                value = float(state)
             except ValueError:
                 continue
 
+            # Extract value - either from state or attributes
+            value: float | None = None
+            try:
+                if attribute_name:
+                    # For climate entities: extract from attributes
+                    attributes = record.get("attributes", {})
+                    if attribute_name in attributes:
+                        value = float(attributes[attribute_name])
+                else:
+                    # For sensor entities: extract from state
+                    state = record.get("state", "")
+                    if state not in ("unknown", "unavailable", ""):
+                        value = float(state)
+            except (ValueError, TypeError, KeyError):
+                continue
+
             # Find the closest value at or before target_time
-            if timestamp <= target_time:
+            if value is not None and timestamp <= target_time:
                 if closest_time is None or timestamp > closest_time:
                     closest_time = timestamp
                     closest_value = value
