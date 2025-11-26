@@ -73,10 +73,19 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         _LOGGER.info("Token configured: %s", "YES" if self._ha_token else "NO")
         _LOGGER.info("Token length: %d", len(self._ha_token) if self._ha_token else 0)
         
+        _LOGGER.info("=" * 60)
+        _LOGGER.info("Checking Home Assistant availability")
+        _LOGGER.info("Base URL: %s", self._ha_url)
+        _LOGGER.info("Token configured: %s", "YES" if self._ha_token else "NO")
+        _LOGGER.info("Token length: %d", len(self._ha_token) if self._ha_token else 0)
+        
         try:
             # Ensure base URL ends with / for proper urljoin behavior
             base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
             url = urljoin(base_url, "api/")
+            _LOGGER.info("Final URL after urljoin: %s", url)
+            _LOGGER.debug("Request headers: %s", {k: v[:20] + "..." if k == "Authorization" and len(v) > 20 else v for k, v in self._get_headers().items()})
+            
             _LOGGER.info("Final URL after urljoin: %s", url)
             _LOGGER.debug("Request headers: %s", {k: v[:20] + "..." if k == "Authorization" and len(v) > 20 else v for k, v in self._get_headers().items()})
             
@@ -88,8 +97,14 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             _LOGGER.info("Response status: %d", response.status_code)
             _LOGGER.debug("Response body: %s", response.text[:200] if response.text else "(empty)")
             _LOGGER.info("=" * 60)
+            _LOGGER.info("Response status: %d", response.status_code)
+            _LOGGER.debug("Response body: %s", response.text[:200] if response.text else "(empty)")
+            _LOGGER.info("=" * 60)
             return response.status_code == 200
         except requests.RequestException as e:
+            _LOGGER.error("Home Assistant API error: %s", e)
+            _LOGGER.error("Error type: %s", type(e).__name__)
+            _LOGGER.info("=" * 60)
             _LOGGER.error("Home Assistant API error: %s", e)
             _LOGGER.error("Error type: %s", type(e).__name__)
             _LOGGER.info("=" * 60)
@@ -366,7 +381,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         # Get temperature histories for cycle end detection
         indoor_temp_history = history_data.get(indoor_temp_entity_id, [])
         target_temp_history = history_data.get(target_temp_entity_id, [])
-
+        
         # Detect entity types to determine how to extract values
         # Check if entities are climate entities (with attributes) or sensors (state only)
         def is_climate_entity(entity_id: str) -> bool:
