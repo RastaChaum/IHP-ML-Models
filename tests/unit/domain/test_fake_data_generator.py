@@ -1,8 +1,7 @@
 """Tests for fake data generator service."""
 
-import pytest
-from datetime import datetime
 
+import pytest
 from domain.services import FakeDataGenerator
 
 

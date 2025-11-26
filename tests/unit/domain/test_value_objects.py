@@ -3,9 +3,9 @@
 These tests verify that value objects are immutable and properly validated.
 """
 
-import pytest
 from datetime import datetime
 
+import pytest
 from domain.value_objects import (
     DeviceConfig,
     ModelInfo,
@@ -121,6 +121,8 @@ class TestTrainingDataPoint:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -130,6 +132,8 @@ class TestTrainingDataPoint:
         assert dp.humidity == 65.0
         assert dp.hour_of_day == 7
         assert dp.day_of_week == 1
+        assert dp.week_of_month == 2
+        assert dp.month == 11
         assert dp.heating_duration_minutes == 45.0
 
     def test_training_data_point_is_immutable(self) -> None:
@@ -141,6 +145,8 @@ class TestTrainingDataPoint:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -157,6 +163,8 @@ class TestTrainingDataPoint:
                 humidity=65.0,
                 hour_of_day=7,
                 day_of_week=1,
+                week_of_month=2,
+                month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -171,6 +179,8 @@ class TestTrainingDataPoint:
                 humidity=150.0,  # Invalid: above 100
                 hour_of_day=7,
                 day_of_week=1,
+                week_of_month=2,
+                month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -185,7 +195,41 @@ class TestTrainingDataPoint:
                 humidity=65.0,
                 hour_of_day=7,
                 day_of_week=1,
+                week_of_month=2,
+                month=11,
                 heating_duration_minutes=-10.0,  # Invalid: negative
+                timestamp=datetime.now(),
+            )
+
+    def test_invalid_week_of_month_raises_error(self) -> None:
+        """Test that invalid week_of_month raises ValueError."""
+        with pytest.raises(ValueError, match="week_of_month"):
+            TrainingDataPoint(
+                outdoor_temp=5.0,
+                indoor_temp=18.0,
+                target_temp=21.0,
+                humidity=65.0,
+                hour_of_day=7,
+                day_of_week=1,
+                week_of_month=0,  # Invalid: below 1
+                month=11,
+                heating_duration_minutes=45.0,
+                timestamp=datetime.now(),
+            )
+
+    def test_invalid_month_raises_error(self) -> None:
+        """Test that invalid month raises ValueError."""
+        with pytest.raises(ValueError, match="month"):
+            TrainingDataPoint(
+                outdoor_temp=5.0,
+                indoor_temp=18.0,
+                target_temp=21.0,
+                humidity=65.0,
+                hour_of_day=7,
+                day_of_week=1,
+                week_of_month=2,
+                month=13,  # Invalid: above 12
+                heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
 
@@ -202,6 +246,8 @@ class TestTrainingData:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -227,9 +273,13 @@ class TestPredictionRequest:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
         )
         assert req.outdoor_temp == 5.0
         assert req.temp_delta == 3.0
+        assert req.week_of_month == 2
+        assert req.month == 11
 
     def test_prediction_request_is_immutable(self) -> None:
         """Test that PredictionRequest is immutable."""
@@ -240,9 +290,27 @@ class TestPredictionRequest:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
         )
         with pytest.raises(AttributeError):
             req.outdoor_temp = 10.0  # type: ignore
+
+    def test_prediction_request_with_device_id(self) -> None:
+        """Test creating a prediction request with device_id."""
+        req = PredictionRequest(
+            outdoor_temp=5.0,
+            indoor_temp=18.0,
+            target_temp=21.0,
+            humidity=65.0,
+            hour_of_day=7,
+            day_of_week=1,
+            week_of_month=2,
+            month=11,
+            device_id="ihp_salon",
+        )
+        assert req.device_id == "ihp_salon"
+        assert req.model_id is None
 
 
 class TestPredictionResult:

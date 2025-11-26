@@ -1,12 +1,12 @@
 """Integration tests for XGBoost training and prediction."""
 
-import pytest
 import tempfile
 from datetime import datetime
 
+import pytest
 from domain.services import FakeDataGenerator
 from domain.value_objects import PredictionRequest
-from infrastructure.adapters import XGBoostTrainer, XGBoostPredictor, FileModelStorage
+from infrastructure.adapters import FileModelStorage, XGBoostPredictor, XGBoostTrainer
 
 
 class TestXGBoostIntegration:
@@ -77,6 +77,8 @@ class TestXGBoostIntegration:
             humidity=65.0,
             hour_of_day=7,
             day_of_week=1,
+            week_of_month=2,
+            month=11,
         )
         result = await predictor.predict(request)
         
@@ -106,6 +108,8 @@ class TestXGBoostIntegration:
             humidity=50.0,
             hour_of_day=12,
             day_of_week=2,
+            week_of_month=2,
+            month=6,
         )
         
         # Large temperature delta should result in longer duration
@@ -116,6 +120,8 @@ class TestXGBoostIntegration:
             humidity=70.0,
             hour_of_day=6,
             day_of_week=0,
+            week_of_month=1,
+            month=1,
         )
         
         small_result = await predictor.predict(small_delta_request)
@@ -207,8 +213,9 @@ class TestFileModelStorage:
     @pytest.mark.asyncio
     async def test_get_latest_model_id(self, storage: FileModelStorage) -> None:
         """Test getting the latest model ID."""
-        from domain.value_objects import ModelInfo
         from datetime import timedelta
+
+        from domain.value_objects import ModelInfo
         
         # Initially no models
         assert await storage.get_latest_model_id() is None

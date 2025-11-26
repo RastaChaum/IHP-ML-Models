@@ -95,6 +95,7 @@ async def train_model() -> Response:
 
     Request body:
     {
+        "device_id": str (optional - for device-specific model),
         "data_points": [
             {
                 "outdoor_temp": float,
@@ -103,6 +104,8 @@ async def train_model() -> Response:
                 "humidity": float,
                 "hour_of_day": int,
                 "day_of_week": int,
+                "week_of_month": int,
+                "month": int,
                 "heating_duration_minutes": float,
                 "timestamp": str (ISO format)
             },
@@ -119,6 +122,8 @@ async def train_model() -> Response:
         if not data_points_raw:
             return jsonify({"error": "No data points provided"}), 400
 
+        device_id = data.get("device_id")
+
         # Parse data points
         data_points = []
         for dp in data_points_raw:
@@ -127,6 +132,16 @@ async def train_model() -> Response:
             except (KeyError, ValueError):
                 timestamp = datetime.now()
 
+            # Calculate week_of_month and month from timestamp if not provided
+            week_of_month = dp.get("week_of_month")
+            if week_of_month is None:
+                week_of_month = ((timestamp.day - 1) // 7) + 1
+                week_of_month = min(week_of_month, 5)
+
+            month = dp.get("month")
+            if month is None:
+                month = timestamp.month
+
             data_points.append(TrainingDataPoint(
                 outdoor_temp=float(dp["outdoor_temp"]),
                 indoor_temp=float(dp["indoor_temp"]),
@@ -134,16 +149,19 @@ async def train_model() -> Response:
                 humidity=float(dp["humidity"]),
                 hour_of_day=int(dp["hour_of_day"]),
                 day_of_week=int(dp["day_of_week"]),
+                week_of_month=int(week_of_month),
+                month=int(month),
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
                 timestamp=timestamp,
             ))
 
         training_data = TrainingData.from_sequence(data_points)
-        model_info = await ml_service.train_with_data(training_data)
+        model_info = await ml_service.train_with_data(training_data, device_id=device_id)
 
         return jsonify({
             "success": True,
             "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
             "created_at": model_info.created_at.isoformat(),
             "training_samples": model_info.training_samples,
             "metrics": model_info.metrics,
@@ -281,7 +299,10 @@ async def predict() -> Response:
         "humidity": float,
         "hour_of_day": int,
         "day_of_week": int,
-        "model_id": str (optional)
+        "week_of_month": int,
+        "month": int,
+        "device_id": str (optional - for device-specific model selection),
+        "model_id": str (optional - for specific model selection)
     }
     """
     try:
@@ -302,6 +323,9 @@ async def predict() -> Response:
             humidity=float(data["humidity"]),
             hour_of_day=int(data["hour_of_day"]),
             day_of_week=int(data["day_of_week"]),
+            week_of_month=int(data["week_of_month"]),
+            month=int(data["month"]),
+            device_id=data.get("device_id"),
             model_id=data.get("model_id"),
         )
 
@@ -336,6 +360,7 @@ async def list_models() -> Response:
             "models": [
                 {
                     "model_id": m.model_id,
+                    "device_id": m.device_id,
                     "created_at": m.created_at.isoformat(),
                     "training_samples": m.training_samples,
                     "metrics": m.metrics,
@@ -346,6 +371,31 @@ async def list_models() -> Response:
         })
     except Exception as e:
         _LOGGER.exception("Error listing models")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/models/device/<device_id>", methods=["GET"])
+@async_route
+async def list_models_for_device(device_id: str) -> Response:
+    """List all available models for a specific device/thermostat."""
+    try:
+        models = await ml_service.list_models_for_device(device_id)
+        return jsonify({
+            "device_id": device_id,
+            "models": [
+                {
+                    "model_id": m.model_id,
+                    "device_id": m.device_id,
+                    "created_at": m.created_at.isoformat(),
+                    "training_samples": m.training_samples,
+                    "metrics": m.metrics,
+                    "version": m.version,
+                }
+                for m in models
+            ]
+        })
+    except Exception as e:
+        _LOGGER.exception("Error listing models for device")
         return jsonify({"error": str(e)}), 500
 
 
@@ -360,6 +410,7 @@ async def get_model(model_id: str) -> Response:
 
         return jsonify({
             "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
             "created_at": model_info.created_at.isoformat(),
             "training_samples": model_info.training_samples,
             "feature_names": list(model_info.feature_names),

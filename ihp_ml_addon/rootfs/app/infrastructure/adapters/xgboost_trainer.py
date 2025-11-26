@@ -3,18 +3,17 @@
 Infrastructure adapter that implements IMLModelTrainer using XGBoost.
 """
 
-import uuid
 import logging
+import uuid
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
-
 from domain.interfaces import IMLModelTrainer, IModelStorage
-from domain.value_objects import TrainingData, ModelInfo
+from domain.value_objects import ModelInfo, TrainingData
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +33,8 @@ class XGBoostTrainer(IMLModelTrainer):
         "humidity",
         "hour_of_day",
         "day_of_week",
+        "week_of_month",
+        "month",
     )
 
     def __init__(
@@ -64,17 +65,24 @@ class XGBoostTrainer(IMLModelTrainer):
             "random_state": 42,
         }
 
-    async def train(self, training_data: TrainingData) -> ModelInfo:
+    async def train(
+        self, training_data: TrainingData, device_id: str | None = None
+    ) -> ModelInfo:
         """Train a new XGBoost model.
 
         Args:
             training_data: Training data containing features and labels
+            device_id: Optional device/thermostat ID for model association
 
         Returns:
             ModelInfo with details about the trained model
         """
-        model_id = f"xgb_{uuid.uuid4().hex[:8]}"
-        _LOGGER.info("Training new XGBoost model: %s", model_id)
+        # Generate model_id with device prefix if device_id is provided
+        if device_id:
+            model_id = f"xgb_{device_id}_{uuid.uuid4().hex[:8]}"
+        else:
+            model_id = f"xgb_{uuid.uuid4().hex[:8]}"
+        _LOGGER.info("Training new XGBoost model: %s (device: %s)", model_id, device_id)
 
         # Prepare features and labels
         X, y = self._prepare_data(training_data)
@@ -111,6 +119,7 @@ class XGBoostTrainer(IMLModelTrainer):
             training_samples=training_data.size,
             feature_names=self.FEATURE_NAMES,
             metrics=metrics,
+            device_id=device_id,
         )
 
         # Save model
@@ -167,6 +176,8 @@ class XGBoostTrainer(IMLModelTrainer):
                 dp.humidity,
                 dp.hour_of_day,
                 dp.day_of_week,
+                dp.week_of_month,
+                dp.month,
             ]
             features.append(feature_row)
             labels.append(dp.heating_duration_minutes)

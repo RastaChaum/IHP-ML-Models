@@ -19,6 +19,8 @@ class TrainingDataPoint:
         humidity: Relative humidity percentage (0-100)
         hour_of_day: Hour of the day (0-23)
         day_of_week: Day of week (0=Monday, 6=Sunday)
+        week_of_month: Week of the month (1-5)
+        month: Month of the year (1-12)
         heating_duration_minutes: Label - time needed to reach target (minutes)
         timestamp: When this data point was recorded
     """
@@ -29,6 +31,8 @@ class TrainingDataPoint:
     humidity: float
     hour_of_day: int
     day_of_week: int
+    week_of_month: int
+    month: int
     heating_duration_minutes: float
     timestamp: datetime
 
@@ -46,6 +50,10 @@ class TrainingDataPoint:
             raise ValueError(f"hour_of_day must be between 0 and 23, got {self.hour_of_day}")
         if not 0 <= self.day_of_week <= 6:
             raise ValueError(f"day_of_week must be between 0 and 6, got {self.day_of_week}")
+        if not 1 <= self.week_of_month <= 5:
+            raise ValueError(f"week_of_month must be between 1 and 5, got {self.week_of_month}")
+        if not 1 <= self.month <= 12:
+            raise ValueError(f"month must be between 1 and 12, got {self.month}")
         if self.heating_duration_minutes < 0:
             raise ValueError(
                 f"heating_duration_minutes must be non-negative, got {self.heating_duration_minutes}"

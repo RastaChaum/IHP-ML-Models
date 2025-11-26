@@ -57,11 +57,35 @@ class IModelStorage(ABC):
         pass
 
     @abstractmethod
+    async def get_latest_model_id_for_device(self, device_id: str) -> str | None:
+        """Get the ID of the most recently trained model for a specific device.
+
+        Args:
+            device_id: Device/thermostat identifier
+
+        Returns:
+            Model ID or None if no models exist for the device
+        """
+        pass
+
+    @abstractmethod
     async def list_models(self) -> list[ModelInfo]:
         """List all available models.
 
         Returns:
             List of model information objects
+        """
+        pass
+
+    @abstractmethod
+    async def list_models_for_device(self, device_id: str) -> list[ModelInfo]:
+        """List all available models for a specific device.
+
+        Args:
+            device_id: Device/thermostat identifier
+
+        Returns:
+            List of model information objects for the device
         """
         pass
 

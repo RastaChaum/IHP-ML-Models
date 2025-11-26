@@ -1,9 +1,8 @@
 """Unit tests for Home Assistant History Reader adapter."""
 
-import pytest
 from unittest.mock import Mock, patch
-from datetime import datetime
 
+import pytest
 from infrastructure.adapters.ha_history_reader import HomeAssistantHistoryReader
 
 

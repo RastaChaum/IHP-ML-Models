@@ -80,14 +80,15 @@ class FileModelStorage(IModelStorage):
                 "feature_names": list(info.feature_names),
                 "metrics": info.metrics,
                 "version": info.version,
+                "device_id": info.device_id,
             }
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
 
             # Update index
-            await self._update_index(model_id, info.created_at)
+            await self._update_index(model_id, info.created_at, info.device_id)
 
-            _LOGGER.info("Model saved: %s", model_id)
+            _LOGGER.info("Model saved: %s (device: %s)", model_id, info.device_id)
 
         except (OSError, pickle.PickleError) as e:
             raise StorageError(f"Failed to save model {model_id}: {e}") from e
@@ -113,7 +114,7 @@ class FileModelStorage(IModelStorage):
                 model = pickle.load(f)
 
             # Load metadata
-            with open(metadata_path, "r") as f:
+            with open(metadata_path) as f:
                 metadata = json.load(f)
 
             model_info = ModelInfo(
@@ -123,6 +124,7 @@ class FileModelStorage(IModelStorage):
                 feature_names=tuple(metadata["feature_names"]),
                 metrics=metadata["metrics"],
                 version=metadata.get("version", "1.0.0"),
+                device_id=metadata.get("device_id"),
             )
 
             _LOGGER.debug("Model loaded: %s", model_id)
@@ -144,7 +146,37 @@ class FileModelStorage(IModelStorage):
         # Sort by creation time and return the latest
         sorted_models = sorted(
             index.items(),
-            key=lambda x: x[1],
+            key=lambda x: x[1].get("created_at", ""),
+            reverse=True,
+        )
+        return sorted_models[0][0] if sorted_models else None
+
+    async def get_latest_model_id_for_device(self, device_id: str) -> str | None:
+        """Get the ID of the most recently trained model for a specific device.
+
+        Args:
+            device_id: Device/thermostat identifier
+
+        Returns:
+            Model ID or None if no models exist for the device
+        """
+        index = await self._load_index()
+        if not index:
+            return None
+
+        # Filter models by device_id and sort by creation time
+        device_models = [
+            (model_id, data)
+            for model_id, data in index.items()
+            if data.get("device_id") == device_id
+        ]
+
+        if not device_models:
+            return None
+
+        sorted_models = sorted(
+            device_models,
+            key=lambda x: x[1].get("created_at", ""),
             reverse=True,
         )
         return sorted_models[0][0] if sorted_models else None
@@ -166,6 +198,18 @@ class FileModelStorage(IModelStorage):
                 _LOGGER.warning("Failed to load model %s: %s", model_id, e)
 
         return sorted(models, key=lambda x: x.created_at, reverse=True)
+
+    async def list_models_for_device(self, device_id: str) -> list[ModelInfo]:
+        """List all available models for a specific device.
+
+        Args:
+            device_id: Device/thermostat identifier
+
+        Returns:
+            List of model information objects for the device
+        """
+        all_models = await self.list_models()
+        return [m for m in all_models if m.device_id == device_id]
 
     async def delete_model(self, model_id: str) -> None:
         """Delete a model from file storage.
@@ -192,11 +236,11 @@ class FileModelStorage(IModelStorage):
         except OSError as e:
             raise StorageError(f"Failed to delete model {model_id}: {e}") from e
 
-    async def _load_index(self) -> dict[str, str]:
+    async def _load_index(self) -> dict[str, dict[str, str]]:
         """Load the models index.
 
         Returns:
-            Dictionary mapping model_id to creation timestamp
+            Dictionary mapping model_id to metadata (created_at, device_id)
         """
         index_path = self._base_path / self.INDEX_FILE_NAME
 
@@ -204,20 +248,36 @@ class FileModelStorage(IModelStorage):
             return {}
 
         try:
-            with open(index_path, "r") as f:
-                return json.load(f)
+            with open(index_path) as f:
+                raw_index = json.load(f)
+                # Handle backward compatibility with old format (string timestamps)
+                converted_index = {}
+                for model_id, value in raw_index.items():
+                    if isinstance(value, str):
+                        # Old format: just timestamp string
+                        converted_index[model_id] = {"created_at": value, "device_id": None}
+                    else:
+                        # New format: dict with created_at and device_id
+                        converted_index[model_id] = value
+                return converted_index
         except (OSError, json.JSONDecodeError):
             return {}
 
-    async def _update_index(self, model_id: str, created_at: datetime) -> None:
+    async def _update_index(
+        self, model_id: str, created_at: datetime, device_id: str | None = None
+    ) -> None:
         """Update the models index with a new model.
 
         Args:
             model_id: Model identifier
             created_at: Model creation timestamp
+            device_id: Device identifier (optional)
         """
         index = await self._load_index()
-        index[model_id] = created_at.isoformat()
+        index[model_id] = {
+            "created_at": created_at.isoformat(),
+            "device_id": device_id,
+        }
         await self._save_index(index)
 
     async def _remove_from_index(self, model_id: str) -> None:
@@ -231,11 +291,11 @@ class FileModelStorage(IModelStorage):
             del index[model_id]
             await self._save_index(index)
 
-    async def _save_index(self, index: dict[str, str]) -> None:
+    async def _save_index(self, index: dict[str, dict[str, str]]) -> None:
         """Save the models index.
 
         Args:
-            index: Dictionary mapping model_id to creation timestamp
+            index: Dictionary mapping model_id to metadata dict
         """
         index_path = self._base_path / self.INDEX_FILE_NAME
         with open(index_path, "w") as f:

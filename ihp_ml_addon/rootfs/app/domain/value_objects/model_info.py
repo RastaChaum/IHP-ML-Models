@@ -18,6 +18,7 @@ class ModelInfo:
         feature_names: Names of features used by the model
         metrics: Training metrics (e.g., RMSE, R²)
         version: Model version string
+        device_id: Device/thermostat ID this model was trained for (optional)
     """
 
     model_id: str
@@ -26,6 +27,7 @@ class ModelInfo:
     feature_names: tuple[str, ...]
     metrics: dict[str, float]
     version: str = "1.0.0"
+    device_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate model info values."""

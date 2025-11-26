@@ -8,7 +8,6 @@ from datetime import datetime
 
 import numpy as np
 import xgboost as xgb
-
 from domain.interfaces import IMLModelPredictor, IModelStorage
 from domain.value_objects import PredictionRequest, PredictionResult
 
@@ -43,7 +42,11 @@ class XGBoostPredictor(IMLModelPredictor):
         # Determine which model to use
         model_id = request.model_id
         if model_id is None:
-            model_id = await self._storage.get_latest_model_id()
+            # If device_id is provided, try to find a model for that device
+            if request.device_id:
+                model_id = await self._storage.get_latest_model_id_for_device(request.device_id)
+            if model_id is None:
+                model_id = await self._storage.get_latest_model_id()
             if model_id is None:
                 raise ValueError("No trained model available")
 
@@ -123,6 +126,8 @@ class XGBoostPredictor(IMLModelPredictor):
             request.humidity,
             request.hour_of_day,
             request.day_of_week,
+            request.week_of_month,
+            request.month,
         ]
         return np.array([features])
 
