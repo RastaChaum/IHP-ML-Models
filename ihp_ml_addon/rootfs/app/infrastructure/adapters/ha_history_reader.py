@@ -69,12 +69,16 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             True if the addon can communicate with Home Assistant
         """
         try:
-            url = urljoin(self._ha_url, "/api/")
+            # Ensure base URL ends with / for proper urljoin behavior
+            base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
+            url = urljoin(base_url, "api/")
+            _LOGGER.debug("Checking HA availability at: %s", url)
             response = requests.get(
                 url,
                 headers=self._get_headers(),
                 timeout=self._timeout,
             )
+            _LOGGER.debug("HA availability check: status=%d", response.status_code)
             return response.status_code == 200
         except requests.RequestException as e:
             _LOGGER.warning("Home Assistant API not available: %s", e)
@@ -167,9 +171,11 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
         # Build the history URL with filter_entity_id parameter
         entity_filter = ",".join(entity_ids)
+        # Ensure base URL ends with / for proper urljoin behavior
+        base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
         url = urljoin(
-            self._ha_url,
-            f"/api/history/period/{start_str}?end_time={end_str}"
+            base_url,
+            f"api/history/period/{start_str}?end_time={end_str}"
             f"&filter_entity_id={entity_filter}&minimal_response",
         )
 
