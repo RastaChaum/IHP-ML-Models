@@ -1,0 +1,43 @@
+services:
+  # Home Assistant test instance
+  homeassistant:
+    container_name: ha-test-ihp
+    image: ghcr.io/home-assistant/home-assistant:stable
+    volumes:
+      - ./test-config:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    environment:
+      - TZ=Europe/Brussels
+
+  # IHP ML Models Addon (development mode)
+  ihp-ml-addon:
+    container_name: ihp-ml-addon-dev
+    build:
+      context: ./ihp_ml_addon
+      dockerfile: Dockerfile
+    volumes:
+      # Mount entire app directory for live editing (no :ro for development)
+      - ./ihp_ml_addon/rootfs/app:/app
+      - ./test-data:/data
+      # Mount tests for running tests inside container
+      - ./tests:/tests
+    ports:
+      - "5000:5000"
+      # Debugpy port for VSCode remote debugging
+      - "5678:5678"
+    environment:
+      - LOG_LEVEL=debug
+      - MODEL_PERSISTENCE_PATH=/data/models
+      - SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN:-}
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://homeassistant.local:8123}
+      - API_HOST=0.0.0.0
+      - API_PORT=5000
+      # Enable Python debugging
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      # Set to "true" to enable VSCode remote debugging (server will wait for debugger)
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+    restart: unless-stopped

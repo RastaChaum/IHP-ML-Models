@@ -11,3 +11,6 @@ requests>=2.31.0,<3.0.0
 
 # Utilities
 pydantic>=2.0.0,<3.0.0
+
+# Development tools
+debugpy>=1.8.0  # Remote debugging for VSCode
