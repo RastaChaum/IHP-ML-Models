@@ -7,7 +7,7 @@ import random
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from domain.value_objects import TrainingData, TrainingDataPoint
+from domain.value_objects import TrainingData, TrainingDataPoint, get_week_of_month
 
 
 class FakeDataGenerator:
@@ -66,8 +66,7 @@ class FakeDataGenerator:
         """
         hour_of_day = timestamp.hour
         day_of_week = timestamp.weekday()
-        week_of_month = ((timestamp.day - 1) // 7) + 1
-        week_of_month = min(week_of_month, 5)  # Cap at 5 for months with more than 4 weeks
+        week_of_month = get_week_of_month(timestamp)
         month = timestamp.month
 
         # Generate realistic environmental conditions

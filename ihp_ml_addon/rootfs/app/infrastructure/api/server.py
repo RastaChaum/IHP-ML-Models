@@ -19,7 +19,13 @@ from flask import Flask, Response, jsonify, request
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from application.services import MLApplicationService
-from domain.value_objects import DeviceConfig, PredictionRequest, TrainingData, TrainingDataPoint
+from domain.value_objects import (
+    DeviceConfig,
+    PredictionRequest,
+    TrainingData,
+    TrainingDataPoint,
+    get_week_of_month,
+)
 from infrastructure.adapters import (
     FileModelStorage,
     HomeAssistantHistoryReader,
@@ -135,8 +141,7 @@ async def train_model() -> Response:
             # Calculate week_of_month and month from timestamp if not provided
             week_of_month = dp.get("week_of_month")
             if week_of_month is None:
-                week_of_month = ((timestamp.day - 1) // 7) + 1
-                week_of_month = min(week_of_month, 5)
+                week_of_month = get_week_of_month(timestamp)
 
             month = dp.get("month")
             if month is None:

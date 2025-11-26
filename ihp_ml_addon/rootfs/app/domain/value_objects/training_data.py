@@ -8,6 +8,20 @@ from datetime import datetime
 from typing import Sequence
 
 
+def get_week_of_month(dt: datetime) -> int:
+    """Calculate the week of the month for a given datetime.
+
+    Args:
+        dt: Datetime to calculate week of month for
+
+    Returns:
+        Week number (1-5) within the month
+    """
+    # Calculate which week this day falls into (1-based)
+    week_of_month = ((dt.day - 1) // 7) + 1
+    return min(week_of_month, 5)  # Cap at 5 for months with more than 4 weeks
+
+
 @dataclass(frozen=True)
 class TrainingDataPoint:
     """A single training data point for heating prediction.

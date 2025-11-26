@@ -8,7 +8,7 @@ from .device_config import DeviceConfig
 from .model_info import ModelInfo
 from .prediction_request import PredictionRequest
 from .prediction_result import PredictionResult
-from .training_data import TrainingData, TrainingDataPoint
+from .training_data import TrainingData, TrainingDataPoint, get_week_of_month
 
 __all__ = [
     "DeviceConfig",
@@ -17,4 +17,5 @@ __all__ = [
     "PredictionResult",
     "TrainingData",
     "TrainingDataPoint",
+    "get_week_of_month",
 ]

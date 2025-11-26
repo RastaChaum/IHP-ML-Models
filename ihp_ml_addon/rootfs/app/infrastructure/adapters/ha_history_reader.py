@@ -17,23 +17,9 @@ from urllib.parse import urljoin
 
 import requests
 from domain.interfaces import IHomeAssistantHistoryReader
-from domain.value_objects import TrainingData, TrainingDataPoint
+from domain.value_objects import TrainingData, TrainingDataPoint, get_week_of_month
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _get_week_of_month(dt: datetime) -> int:
-    """Calculate the week of the month for a given datetime.
-
-    Args:
-        dt: Datetime to calculate week of month for
-
-    Returns:
-        Week number (1-5) within the month
-    """
-    # Calculate which week this day falls into (1-based)
-    week_of_month = ((dt.day - 1) // 7) + 1
-    return min(week_of_month, 5)  # Cap at 5 for months with more than 4 weeks
 
 
 class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
@@ -299,7 +285,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         humidity=start_humidity or 50.0,
                         hour_of_day=heating_start.hour,
                         day_of_week=heating_start.weekday(),
-                        week_of_month=_get_week_of_month(heating_start),
+                        week_of_month=get_week_of_month(heating_start),
                         month=heating_start.month,
                         heating_duration_minutes=duration_minutes,
                         timestamp=heating_start,
