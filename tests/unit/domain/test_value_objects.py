@@ -13,7 +13,38 @@ from domain.value_objects import (
     PredictionResult,
     TrainingData,
     TrainingDataPoint,
+    get_week_of_month,
 )
+
+
+class TestGetWeekOfMonth:
+    """Tests for get_week_of_month utility function."""
+
+    def test_first_week_of_month(self) -> None:
+        """Test that days 1-7 are in week 1."""
+        assert get_week_of_month(datetime(2024, 11, 1)) == 1
+        assert get_week_of_month(datetime(2024, 11, 7)) == 1
+
+    def test_second_week_of_month(self) -> None:
+        """Test that days 8-14 are in week 2."""
+        assert get_week_of_month(datetime(2024, 11, 8)) == 2
+        assert get_week_of_month(datetime(2024, 11, 14)) == 2
+
+    def test_third_week_of_month(self) -> None:
+        """Test that days 15-21 are in week 3."""
+        assert get_week_of_month(datetime(2024, 11, 15)) == 3
+        assert get_week_of_month(datetime(2024, 11, 21)) == 3
+
+    def test_fourth_week_of_month(self) -> None:
+        """Test that days 22-28 are in week 4."""
+        assert get_week_of_month(datetime(2024, 11, 22)) == 4
+        assert get_week_of_month(datetime(2024, 11, 28)) == 4
+
+    def test_fifth_week_capped(self) -> None:
+        """Test that days 29-31 are in week 5 (capped)."""
+        assert get_week_of_month(datetime(2024, 11, 29)) == 5
+        assert get_week_of_month(datetime(2024, 11, 30)) == 5
+        assert get_week_of_month(datetime(2024, 1, 31)) == 5
 
 
 class TestDeviceConfig:
