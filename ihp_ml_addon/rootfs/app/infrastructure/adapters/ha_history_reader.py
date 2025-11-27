@@ -40,6 +40,11 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     block the current thread but is acceptable for Flask's threading model.
     """
 
+    # Temperature threshold for cycle detection (in °C)
+    # A heating cycle starts when target - current > threshold
+    # and ends when target - current <= threshold
+    TEMP_DELTA_THRESHOLD = 0.2
+
     def __init__(
         self,
         ha_url: str | None = None,
@@ -386,9 +391,6 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             List of TrainingDataPoint objects
         """
-        # Temperature threshold for cycle detection (in °C)
-        TEMP_DELTA_THRESHOLD = 0.2
-
         data_points: list[TrainingDataPoint] = []
 
         # Get heating state history
@@ -520,7 +522,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 # Not in a cycle - check if we should start one
                 if is_heating and current_indoor is not None and current_target is not None:
                     temp_delta = current_target - current_indoor
-                    if temp_delta > TEMP_DELTA_THRESHOLD:
+                    if temp_delta > self.TEMP_DELTA_THRESHOLD:
                         # Start a heating cycle
                         heating_start = timestamp
                         start_indoor_temp = current_indoor
@@ -571,7 +573,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         cycle_ended = True
                         end_reason = "target_exceeded"
                         start_target_temp = current_indoor  # Record final target temp as current indoor
-                    elif temp_delta <= TEMP_DELTA_THRESHOLD:
+                    elif temp_delta <= self.TEMP_DELTA_THRESHOLD:
                         # Target reached (within threshold)
                         cycle_ended = True
                         end_reason = "target_reached"
@@ -675,9 +677,6 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             List of TrainingDataPoint objects
         """
-        # Temperature threshold for cycle detection (in °C)
-        TEMP_DELTA_THRESHOLD = 0.2
-
         data_points: list[TrainingDataPoint] = []
 
         # Get On Time history
@@ -797,7 +796,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 # Not in a cycle - check if we should start one
                 if is_heating and current_indoor is not None and current_target is not None:
                     temp_delta = current_target - current_indoor
-                    if temp_delta > TEMP_DELTA_THRESHOLD:
+                    if temp_delta > self.TEMP_DELTA_THRESHOLD:
                         heating_start = timestamp
                         last_heating_time = timestamp
                         start_indoor_temp = current_indoor
@@ -861,7 +860,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 # Check temperature conditions
                 if current_indoor is not None and current_target is not None:
                     temp_delta = current_target - current_indoor
-                    if current_indoor > current_target or temp_delta <= TEMP_DELTA_THRESHOLD:
+                    if current_indoor > current_target or temp_delta <= self.TEMP_DELTA_THRESHOLD:
                         _LOGGER.debug(
                             "Cycle ended at %s (target reached: indoor=%.1f, target=%.1f)",
                             timestamp.isoformat(),
@@ -959,6 +958,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         - sum: Sum of values (for measurement sensors like On Time)
         - state: Last known state value
 
+        Note: The statistics API requires a POST request with statistic_ids.
+        See: https://developers.home-assistant.io/docs/api/rest#get-apihistorystatistics
+
         Args:
             entity_ids: List of entity IDs to fetch
             start_time: Start of time range
@@ -967,12 +969,12 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             Dictionary mapping entity_id to list of statistics records
         """
-        # Format time for HA API
-        start_str = start_time.isoformat()
-        end_str = end_time.isoformat()
+        # Format time for HA API (ISO format)
+        start_str = start_time.strftime("%Y-%m-%dT%H:%M:%S")
+        end_str = end_time.strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Build the statistics URL
-        # HA statistics API: /api/history/statistics/{start_time}
+        # Build the statistics URL - use POST with JSON body
+        # HA Statistics API: POST /api/history/statistics
         base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
         url = urljoin(
             base_url,
@@ -995,12 +997,14 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             _LOGGER.error("Failed to fetch statistics: %s", e)
             raise ConnectionError(f"Failed to fetch statistics from Home Assistant: {e}") from e
 
-        # Convert list to dictionary by entity_id
+        # Convert list of entity histories to dictionary format
+        # The history/period API returns [[entity1_history], [entity2_history], ...]
         result: dict[str, list[dict[str, Any]]] = {}
         for entity_stats in stats_list:
-            if entity_stats:
+            if entity_stats and len(entity_stats) > 0:
                 entity_id = entity_stats[0].get("entity_id", "")
                 if entity_id:
+                    # Sort by timestamp
                     sorted_stats = sorted(
                         entity_stats,
                         key=lambda x: x.get("last_changed") or x.get("last_updated") or "",
@@ -1026,9 +1030,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     ) -> list[TrainingDataPoint]:
         """Extract heating cycles from statistics data using On Time sensor.
 
-        Statistics data contains aggregated values every 5 minutes.
-        For the On Time sensor (measurement type), we look at the "sum" or "state"
-        field to determine heating activity.
+        Statistics data is fetched using the history API with significant_changes_only=false
+        to get all state changes. The On Time sensor reports seconds of heating activity.
 
         Args:
             statistics_data: Dictionary of entity_id -> statistics records
@@ -1042,8 +1045,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             List of TrainingDataPoint objects
         """
-        # Statistics data format is similar to history, so we can reuse the
-        # same extraction logic with minor adjustments
+        # The history API format is compatible with our extraction logic
         return self._extract_heating_cycles_from_on_time(
             statistics_data,
             indoor_temp_entity_id,

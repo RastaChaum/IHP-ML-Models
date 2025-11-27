@@ -1,6 +1,5 @@
 """Unit tests for Home Assistant History Reader adapter."""
 
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
