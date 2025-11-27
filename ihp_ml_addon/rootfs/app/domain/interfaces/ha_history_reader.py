@@ -26,6 +26,9 @@ class IHomeAssistantHistoryReader(ABC):
         humidity_entity_id: str | None,
         start_time: datetime,
         end_time: datetime,
+        on_time_entity_id: str | None = None,
+        on_time_buffer_minutes: int = 15,
+        use_statistics: bool = False,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -37,6 +40,14 @@ class IHomeAssistantHistoryReader(ABC):
             humidity_entity_id: Entity ID for humidity sensor (optional)
             start_time: Start of the time range for fetching history
             end_time: End of the time range for fetching history
+            on_time_entity_id: Entity ID for thermostat "On Time" sensor (optional).
+                If provided, this sensor is used instead of heating_state_entity_id
+                to determine when heating is active.
+            on_time_buffer_minutes: Buffer time in minutes for "On Time" detection.
+                If heating doesn't activate for this duration, consider heating off.
+                Default is 15 minutes.
+            use_statistics: If True, use Home Assistant statistics API for longer
+                data retention (>10 days). Requires on_time_entity_id.
 
         Returns:
             TrainingData with extracted heating cycles

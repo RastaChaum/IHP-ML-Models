@@ -22,6 +22,15 @@ class DeviceConfig:
         humidity_entity_id: Entity ID for humidity sensor (optional)
         target_temp_entity_id: Entity ID for target temperature
         heating_state_entity_id: Entity ID for heating state (on/off)
+        on_time_entity_id: Entity ID for thermostat "On Time" sensor (optional).
+            If provided, this sensor is used instead of heating_state_entity_id
+            to determine when heating is active. This is useful for fetching
+            statistics data beyond the 10-day history limit.
+        on_time_buffer_minutes: Buffer time in minutes for "On Time" detection.
+            If heating doesn't activate for this duration, consider heating off.
+            Default is 15 minutes to handle intermittent heating cycles.
+        use_statistics: If True, use Home Assistant statistics API for longer
+            data retention (>10 days). Requires on_time_entity_id. Default False.
         history_days: Number of days of history to fetch for training
     """
 
@@ -31,6 +40,9 @@ class DeviceConfig:
     target_temp_entity_id: str
     heating_state_entity_id: str
     humidity_entity_id: str | None = None
+    on_time_entity_id: str | None = None
+    on_time_buffer_minutes: int = 15
+    use_statistics: bool = False
     history_days: int = 30
 
     def __post_init__(self) -> None:
@@ -49,3 +61,15 @@ class DeviceConfig:
             raise ValueError(f"history_days must be at least 1, got {self.history_days}")
         if self.history_days > 365:
             raise ValueError(f"history_days must be at most 365, got {self.history_days}")
+        if self.on_time_buffer_minutes < 1:
+            raise ValueError(
+                f"on_time_buffer_minutes must be at least 1, got {self.on_time_buffer_minutes}"
+            )
+        if self.on_time_buffer_minutes > 60:
+            raise ValueError(
+                f"on_time_buffer_minutes must be at most 60, got {self.on_time_buffer_minutes}"
+            )
+        if self.use_statistics and not self.on_time_entity_id:
+            raise ValueError(
+                "on_time_entity_id is required when use_statistics is True"
+            )

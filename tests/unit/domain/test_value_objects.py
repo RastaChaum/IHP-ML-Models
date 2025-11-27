@@ -139,6 +139,88 @@ class TestDeviceConfig:
         with pytest.raises(AttributeError):
             config.device_id = "new_id"  # type: ignore
 
+    def test_device_config_with_on_time_entity(self) -> None:
+        """Test creating a device configuration with on_time_entity_id."""
+        config = DeviceConfig(
+            device_id="ihp_salon",
+            indoor_temp_entity_id="sensor.salon_temperature",
+            outdoor_temp_entity_id="sensor.outdoor_temperature",
+            target_temp_entity_id="climate.vtherm_salon",
+            heating_state_entity_id="climate.vtherm_salon",
+            on_time_entity_id="sensor.thermostat_on_time",
+            on_time_buffer_minutes=20,
+        )
+        assert config.on_time_entity_id == "sensor.thermostat_on_time"
+        assert config.on_time_buffer_minutes == 20
+        assert config.use_statistics is False
+
+    def test_device_config_with_use_statistics(self) -> None:
+        """Test creating a device configuration with use_statistics enabled."""
+        config = DeviceConfig(
+            device_id="ihp_salon",
+            indoor_temp_entity_id="sensor.salon_temperature",
+            outdoor_temp_entity_id="sensor.outdoor_temperature",
+            target_temp_entity_id="climate.vtherm_salon",
+            heating_state_entity_id="climate.vtherm_salon",
+            on_time_entity_id="sensor.thermostat_on_time",
+            use_statistics=True,
+            history_days=60,
+        )
+        assert config.use_statistics is True
+        assert config.on_time_entity_id == "sensor.thermostat_on_time"
+        assert config.history_days == 60
+
+    def test_device_config_use_statistics_without_on_time_raises_error(self) -> None:
+        """Test that use_statistics without on_time_entity_id raises ValueError."""
+        with pytest.raises(ValueError, match="on_time_entity_id is required"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                use_statistics=True,  # Requires on_time_entity_id
+            )
+
+    def test_device_config_on_time_buffer_too_low_raises_error(self) -> None:
+        """Test that on_time_buffer_minutes < 1 raises ValueError."""
+        with pytest.raises(ValueError, match="on_time_buffer_minutes must be at least 1"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                on_time_buffer_minutes=0,
+            )
+
+    def test_device_config_on_time_buffer_too_high_raises_error(self) -> None:
+        """Test that on_time_buffer_minutes > 60 raises ValueError."""
+        with pytest.raises(ValueError, match="on_time_buffer_minutes must be at most 60"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                on_time_buffer_minutes=90,
+            )
+
+    def test_device_config_defaults(self) -> None:
+        """Test that default values are set correctly."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+        )
+        assert config.humidity_entity_id is None
+        assert config.on_time_entity_id is None
+        assert config.on_time_buffer_minutes == 15  # Default buffer
+        assert config.use_statistics is False
+        assert config.history_days == 30
+
 
 class TestTrainingDataPoint:
     """Tests for TrainingDataPoint value object."""

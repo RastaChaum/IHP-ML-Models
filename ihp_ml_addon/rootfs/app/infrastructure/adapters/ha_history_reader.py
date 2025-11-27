@@ -7,11 +7,19 @@ Note: This adapter uses the synchronous requests library. While the methods
 are declared async to match the interface, they run synchronously within
 the Flask application context (which uses asyncio.run() for async routes).
 For a production system with high concurrency, consider using aiohttp.
+
+Supports two modes of operation:
+1. Standard history API (default): Uses HA's history/period API for state data.
+   Limited to ~10 days of precise data by default in Home Assistant.
+
+2. Statistics API (optional): Uses HA's statistics API for longer data retention.
+   Requires on_time_entity_id to detect heating state from numeric "On Time" sensor.
+   See: https://data.home-assistant.io/docs/statistics/
 """
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin
 
@@ -104,6 +112,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         humidity_entity_id: str | None,
         start_time: datetime,
         end_time: datetime,
+        on_time_entity_id: str | None = None,
+        on_time_buffer_minutes: int = 15,
+        use_statistics: bool = False,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -122,10 +133,36 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             humidity_entity_id: Entity ID for humidity sensor (optional)
             start_time: Start of the time range for fetching history
             end_time: End of the time range for fetching history
+            on_time_entity_id: Entity ID for thermostat "On Time" sensor (optional).
+                If provided, this sensor is used instead of heating_state_entity_id
+                to determine when heating is active.
+            on_time_buffer_minutes: Buffer time in minutes for "On Time" detection.
+                If heating doesn't activate for this duration, consider heating off.
+                Default is 15 minutes.
+            use_statistics: If True, use Home Assistant statistics API for longer
+                data retention (>10 days). Requires on_time_entity_id.
 
         Returns:
             TrainingData with extracted heating cycles
         """
+        if use_statistics:
+            # Use statistics API for longer data retention
+            if not on_time_entity_id:
+                raise ValueError(
+                    "on_time_entity_id is required when use_statistics is True"
+                )
+            return await self._fetch_training_data_from_statistics(
+                indoor_temp_entity_id=indoor_temp_entity_id,
+                outdoor_temp_entity_id=outdoor_temp_entity_id,
+                target_temp_entity_id=target_temp_entity_id,
+                on_time_entity_id=on_time_entity_id,
+                humidity_entity_id=humidity_entity_id,
+                start_time=start_time,
+                end_time=end_time,
+                on_time_buffer_minutes=on_time_buffer_minutes,
+            )
+
+        # Use standard history API
         entity_ids = [
             indoor_temp_entity_id,
             outdoor_temp_entity_id,
@@ -134,19 +171,34 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         ]
         if humidity_entity_id:
             entity_ids.append(humidity_entity_id)
+        if on_time_entity_id:
+            entity_ids.append(on_time_entity_id)
 
         # Fetch history for all entities
         history_data = await self._fetch_history(entity_ids, start_time, end_time)
 
         # Extract heating cycles and create training data points
-        data_points = self._extract_heating_cycles(
-            history_data,
-            indoor_temp_entity_id,
-            outdoor_temp_entity_id,
-            target_temp_entity_id,
-            heating_state_entity_id,
-            humidity_entity_id,
-        )
+        if on_time_entity_id:
+            # Use On Time sensor for heating detection with buffering
+            data_points = self._extract_heating_cycles_from_on_time(
+                history_data,
+                indoor_temp_entity_id,
+                outdoor_temp_entity_id,
+                target_temp_entity_id,
+                on_time_entity_id,
+                humidity_entity_id,
+                on_time_buffer_minutes,
+            )
+        else:
+            # Use traditional heating state entity
+            data_points = self._extract_heating_cycles(
+                history_data,
+                indoor_temp_entity_id,
+                outdoor_temp_entity_id,
+                target_temp_entity_id,
+                heating_state_entity_id,
+                humidity_entity_id,
+            )
 
         if not data_points:
             raise ValueError("No valid heating cycles found in historical data")
@@ -179,8 +231,6 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             Dictionary mapping entity_id to list of state records
         """
-        from datetime import timedelta
-
         # Calculate time range
         total_days = (end_time - start_time).days
         
@@ -591,3 +641,415 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     closest_value = value
 
         return closest_value
+
+    def _extract_heating_cycles_from_on_time(
+        self,
+        history_data: dict[str, list[dict[str, Any]]],
+        indoor_temp_entity_id: str,
+        outdoor_temp_entity_id: str,
+        target_temp_entity_id: str,
+        on_time_entity_id: str,
+        humidity_entity_id: str | None,
+        buffer_minutes: int,
+    ) -> list[TrainingDataPoint]:
+        """Extract heating cycles using "On Time" sensor with buffering.
+
+        The "On Time" sensor reports seconds of heating activity. A heating cycle
+        is detected when:
+        - START: On Time value increases (heating is active)
+        - END: On Time value stays at 0 for buffer_minutes
+
+        This handles the fact that radiators don't heat continuously - they cycle
+        on and off. The buffer prevents considering the heating as "off" during
+        short pauses in the heating cycle.
+
+        Args:
+            history_data: Dictionary of entity_id -> history records
+            indoor_temp_entity_id: Entity ID for indoor temperature
+            outdoor_temp_entity_id: Entity ID for outdoor temperature
+            target_temp_entity_id: Entity ID for target temperature
+            on_time_entity_id: Entity ID for "On Time" sensor
+            humidity_entity_id: Entity ID for humidity (optional)
+            buffer_minutes: Buffer time to avoid false cycle ends
+
+        Returns:
+            List of TrainingDataPoint objects
+        """
+        # Temperature threshold for cycle detection (in °C)
+        TEMP_DELTA_THRESHOLD = 0.2
+
+        data_points: list[TrainingDataPoint] = []
+
+        # Get On Time history
+        on_time_history = history_data.get(on_time_entity_id, [])
+        if not on_time_history:
+            _LOGGER.warning("No On Time history found for %s", on_time_entity_id)
+            return data_points
+
+        # Get temperature histories
+        indoor_temp_history = history_data.get(indoor_temp_entity_id, [])
+        target_temp_history = history_data.get(target_temp_entity_id, [])
+
+        # Detect entity types
+        def is_climate_entity(entity_id: str) -> bool:
+            return entity_id.startswith("climate.")
+
+        indoor_is_climate = is_climate_entity(indoor_temp_entity_id)
+        outdoor_is_climate = is_climate_entity(outdoor_temp_entity_id)
+        target_is_climate = is_climate_entity(target_temp_entity_id)
+        humidity_is_climate = humidity_entity_id and is_climate_entity(humidity_entity_id)
+
+        _LOGGER.debug("Using On Time sensor for heating detection: %s", on_time_entity_id)
+        _LOGGER.debug("Buffer duration: %d minutes", buffer_minutes)
+
+        # Track heating cycles
+        heating_start: datetime | None = None
+        start_indoor_temp: float | None = None
+        start_outdoor_temp: float | None = None
+        start_humidity: float | None = None
+        start_target_temp: float | None = None
+        last_heating_time: datetime | None = None  # Last time heating was active
+
+        def reset_cycle() -> None:
+            nonlocal heating_start, start_indoor_temp, start_outdoor_temp
+            nonlocal start_humidity, start_target_temp, last_heating_time
+            heating_start = None
+            start_indoor_temp = None
+            start_outdoor_temp = None
+            start_humidity = None
+            start_target_temp = None
+            last_heating_time = None
+
+        def record_cycle(end_timestamp: datetime) -> None:
+            nonlocal data_points
+            if heating_start is None:
+                return
+
+            duration_minutes = (end_timestamp - heating_start).total_seconds() / 60.0
+
+            if (
+                start_indoor_temp is not None
+                and start_outdoor_temp is not None
+                and start_target_temp is not None
+                and duration_minutes > 0
+                and duration_minutes < 300
+            ):
+                try:
+                    data_point = TrainingDataPoint(
+                        outdoor_temp=start_outdoor_temp,
+                        indoor_temp=start_indoor_temp,
+                        target_temp=start_target_temp,
+                        humidity=start_humidity or 50.0,
+                        hour_of_day=heating_start.hour,
+                        day_of_week=heating_start.weekday(),
+                        week_of_month=get_week_of_month(heating_start),
+                        month=heating_start.month,
+                        heating_duration_minutes=duration_minutes,
+                        timestamp=heating_start,
+                    )
+                    data_points.append(data_point)
+                    _LOGGER.debug(
+                        "Recorded cycle: start=%s, duration=%.1f min",
+                        heating_start.isoformat(),
+                        duration_minutes,
+                    )
+                except ValueError as e:
+                    _LOGGER.debug("Skipping invalid data point: %s", e)
+
+        for record in on_time_history:
+            timestamp_str = record.get("last_changed") or record.get("last_updated")
+            if not timestamp_str:
+                continue
+
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            # Get On Time value (seconds of heating)
+            on_time_value: float = 0.0
+            try:
+                state = record.get("state", "")
+                if state not in ("unknown", "unavailable", ""):
+                    on_time_value = float(state)
+            except (ValueError, TypeError):
+                continue
+
+            # Check if heating is active (on_time > 0 means heating was active)
+            is_heating = on_time_value > 0
+
+            # Get current temperatures
+            if indoor_is_climate:
+                current_indoor = self._get_value_at_time(
+                    indoor_temp_history, timestamp, attribute_name="current_temperature"
+                )
+            else:
+                current_indoor = self._get_value_at_time(indoor_temp_history, timestamp)
+
+            if target_is_climate:
+                current_target = self._get_value_at_time(
+                    target_temp_history, timestamp, attribute_name="temperature"
+                )
+            else:
+                current_target = self._get_value_at_time(target_temp_history, timestamp)
+
+            if heating_start is None:
+                # Not in a cycle - check if we should start one
+                if is_heating and current_indoor is not None and current_target is not None:
+                    temp_delta = current_target - current_indoor
+                    if temp_delta > TEMP_DELTA_THRESHOLD:
+                        heating_start = timestamp
+                        last_heating_time = timestamp
+                        start_indoor_temp = current_indoor
+                        start_target_temp = current_target
+
+                        if outdoor_is_climate:
+                            start_outdoor_temp = self._get_value_at_time(
+                                history_data.get(outdoor_temp_entity_id, []),
+                                timestamp,
+                                attribute_name="ext_current_temperature",
+                            )
+                        else:
+                            start_outdoor_temp = self._get_value_at_time(
+                                history_data.get(outdoor_temp_entity_id, []),
+                                timestamp,
+                            )
+
+                        if humidity_entity_id:
+                            if humidity_is_climate:
+                                start_humidity = self._get_value_at_time(
+                                    history_data.get(humidity_entity_id, []),
+                                    timestamp,
+                                    attribute_name="humidity",
+                                )
+                            else:
+                                start_humidity = self._get_value_at_time(
+                                    history_data.get(humidity_entity_id, []),
+                                    timestamp,
+                                )
+                        else:
+                            start_humidity = 50.0
+
+                        _LOGGER.debug(
+                            "Cycle started at %s (indoor=%.1f, target=%.1f)",
+                            timestamp.isoformat(),
+                            current_indoor,
+                            current_target,
+                        )
+            else:
+                # Currently in a cycle
+                if is_heating:
+                    # Update last heating time
+                    last_heating_time = timestamp
+                else:
+                    # Heating is not active - check buffer
+                    if last_heating_time is not None:
+                        inactive_duration = (timestamp - last_heating_time).total_seconds() / 60.0
+                        
+                        if inactive_duration >= buffer_minutes:
+                            # Buffer exceeded - end the cycle
+                            _LOGGER.debug(
+                                "Cycle ended at %s (buffer exceeded: %.1f min)",
+                                timestamp.isoformat(),
+                                inactive_duration,
+                            )
+                            # Use last_heating_time as end time, not current timestamp
+                            record_cycle(last_heating_time)
+                            reset_cycle()
+                            continue
+
+                # Check temperature conditions
+                if current_indoor is not None and current_target is not None:
+                    temp_delta = current_target - current_indoor
+                    if current_indoor > current_target or temp_delta <= TEMP_DELTA_THRESHOLD:
+                        _LOGGER.debug(
+                            "Cycle ended at %s (target reached: indoor=%.1f, target=%.1f)",
+                            timestamp.isoformat(),
+                            current_indoor,
+                            current_target,
+                        )
+                        record_cycle(timestamp)
+                        reset_cycle()
+
+        _LOGGER.info(
+            "Extracted %d heating cycles using On Time sensor",
+            len(data_points),
+        )
+        return data_points
+
+    async def _fetch_training_data_from_statistics(
+        self,
+        indoor_temp_entity_id: str,
+        outdoor_temp_entity_id: str,
+        target_temp_entity_id: str,
+        on_time_entity_id: str,
+        humidity_entity_id: str | None,
+        start_time: datetime,
+        end_time: datetime,
+        on_time_buffer_minutes: int,
+    ) -> TrainingData:
+        """Fetch training data using Home Assistant statistics API.
+
+        This method uses the statistics API which provides aggregated numeric data
+        with longer retention than the standard history API (default 10 days).
+        Statistics are stored every 5 minutes with sum/mean/min/max values.
+
+        See: https://data.home-assistant.io/docs/statistics/
+
+        Args:
+            indoor_temp_entity_id: Entity ID for indoor temperature sensor
+            outdoor_temp_entity_id: Entity ID for outdoor temperature sensor
+            target_temp_entity_id: Entity ID for target temperature
+            on_time_entity_id: Entity ID for thermostat "On Time" sensor
+            humidity_entity_id: Entity ID for humidity sensor (optional)
+            start_time: Start of time range
+            end_time: End of time range
+            on_time_buffer_minutes: Buffer time for heating detection
+
+        Returns:
+            TrainingData with extracted heating cycles
+        """
+        entity_ids = [
+            indoor_temp_entity_id,
+            outdoor_temp_entity_id,
+            target_temp_entity_id,
+            on_time_entity_id,
+        ]
+        if humidity_entity_id:
+            entity_ids.append(humidity_entity_id)
+
+        # Fetch statistics for all entities
+        statistics_data = await self._fetch_statistics(entity_ids, start_time, end_time)
+
+        # Extract heating cycles using On Time sensor
+        data_points = self._extract_heating_cycles_from_statistics(
+            statistics_data,
+            indoor_temp_entity_id,
+            outdoor_temp_entity_id,
+            target_temp_entity_id,
+            on_time_entity_id,
+            humidity_entity_id,
+            on_time_buffer_minutes,
+        )
+
+        if not data_points:
+            raise ValueError("No valid heating cycles found in statistics data")
+
+        _LOGGER.info(
+            "Extracted %d training data points from statistics (%s to %s)",
+            len(data_points),
+            start_time.isoformat(),
+            end_time.isoformat(),
+        )
+
+        return TrainingData.from_sequence(data_points)
+
+    async def _fetch_statistics(
+        self,
+        entity_ids: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch statistics data for multiple entities.
+
+        Home Assistant stores statistics every 5 minutes with:
+        - mean: Average value during the 5-minute period
+        - min: Minimum value during the 5-minute period
+        - max: Maximum value during the 5-minute period
+        - sum: Sum of values (for measurement sensors like On Time)
+        - state: Last known state value
+
+        Args:
+            entity_ids: List of entity IDs to fetch
+            start_time: Start of time range
+            end_time: End of time range
+
+        Returns:
+            Dictionary mapping entity_id to list of statistics records
+        """
+        # Format time for HA API
+        start_str = start_time.isoformat()
+        end_str = end_time.isoformat()
+
+        # Build the statistics URL
+        # HA statistics API: /api/history/statistics/{start_time}
+        base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
+        url = urljoin(
+            base_url,
+            f"api/history/period/{start_str}?end_time={end_str}"
+            f"&filter_entity_id={','.join(entity_ids)}"
+            "&significant_changes_only=false",
+        )
+
+        _LOGGER.info("Fetching statistics from: %s", url)
+
+        try:
+            response = requests.get(
+                url,
+                headers=self._get_headers(),
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            stats_list = response.json()
+        except requests.RequestException as e:
+            _LOGGER.error("Failed to fetch statistics: %s", e)
+            raise ConnectionError(f"Failed to fetch statistics from Home Assistant: {e}") from e
+
+        # Convert list to dictionary by entity_id
+        result: dict[str, list[dict[str, Any]]] = {}
+        for entity_stats in stats_list:
+            if entity_stats:
+                entity_id = entity_stats[0].get("entity_id", "")
+                if entity_id:
+                    sorted_stats = sorted(
+                        entity_stats,
+                        key=lambda x: x.get("last_changed") or x.get("last_updated") or "",
+                    )
+                    result[entity_id] = sorted_stats
+                    _LOGGER.info(
+                        "Statistics for %s: %d records",
+                        entity_id,
+                        len(sorted_stats),
+                    )
+
+        return result
+
+    def _extract_heating_cycles_from_statistics(
+        self,
+        statistics_data: dict[str, list[dict[str, Any]]],
+        indoor_temp_entity_id: str,
+        outdoor_temp_entity_id: str,
+        target_temp_entity_id: str,
+        on_time_entity_id: str,
+        humidity_entity_id: str | None,
+        buffer_minutes: int,
+    ) -> list[TrainingDataPoint]:
+        """Extract heating cycles from statistics data using On Time sensor.
+
+        Statistics data contains aggregated values every 5 minutes.
+        For the On Time sensor (measurement type), we look at the "sum" or "state"
+        field to determine heating activity.
+
+        Args:
+            statistics_data: Dictionary of entity_id -> statistics records
+            indoor_temp_entity_id: Entity ID for indoor temperature
+            outdoor_temp_entity_id: Entity ID for outdoor temperature
+            target_temp_entity_id: Entity ID for target temperature
+            on_time_entity_id: Entity ID for "On Time" sensor
+            humidity_entity_id: Entity ID for humidity (optional)
+            buffer_minutes: Buffer time to avoid false cycle ends
+
+        Returns:
+            List of TrainingDataPoint objects
+        """
+        # Statistics data format is similar to history, so we can reuse the
+        # same extraction logic with minor adjustments
+        return self._extract_heating_cycles_from_on_time(
+            statistics_data,
+            indoor_temp_entity_id,
+            outdoor_temp_entity_id,
+            target_temp_entity_id,
+            on_time_entity_id,
+            humidity_entity_id,
+            buffer_minutes,
+        )

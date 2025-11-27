@@ -139,6 +139,9 @@ class MLApplicationService:
             humidity_entity_id=device_config.humidity_entity_id,
             start_time=start_time,
             end_time=end_time,
+            on_time_entity_id=device_config.on_time_entity_id,
+            on_time_buffer_minutes=device_config.on_time_buffer_minutes,
+            use_statistics=device_config.use_statistics,
         )
 
         _LOGGER.info(

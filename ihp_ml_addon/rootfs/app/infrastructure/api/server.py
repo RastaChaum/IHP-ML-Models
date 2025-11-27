@@ -246,6 +246,13 @@ async def train_with_device_config() -> Response:
         "target_temp_entity_id": str,
         "heating_state_entity_id": str,
         "humidity_entity_id": str (optional),
+        "on_time_entity_id": str (optional) - Entity ID for "On Time" sensor.
+            If provided, uses this sensor instead of heating_state_entity_id
+            to detect when heating is active. Useful for longer data retention.
+        "on_time_buffer_minutes": int (optional, default: 15) - Buffer time in minutes.
+            If heating doesn't activate for this duration, consider it off.
+        "use_statistics": bool (optional, default: false) - Use HA statistics API
+            for longer data retention (>10 days). Requires on_time_entity_id.
         "history_days": int (optional, default: 30)
     }
     """
@@ -272,6 +279,20 @@ async def train_with_device_config() -> Response:
                     "error": f"Invalid history_days value: {history_days_raw}"
                 }), 400
 
+            # Parse on_time_buffer_minutes
+            on_time_buffer_raw = data.get("on_time_buffer_minutes", 15)
+            try:
+                on_time_buffer_minutes = int(on_time_buffer_raw)
+            except (ValueError, TypeError):
+                return jsonify({
+                    "error": f"Invalid on_time_buffer_minutes value: {on_time_buffer_raw}"
+                }), 400
+
+            # Parse use_statistics
+            use_statistics = data.get("use_statistics", False)
+            if isinstance(use_statistics, str):
+                use_statistics = use_statistics.lower() in ("true", "1", "yes")
+
             device_config = DeviceConfig(
                 device_id=data.get("device_id", ""),
                 indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
@@ -279,6 +300,9 @@ async def train_with_device_config() -> Response:
                 target_temp_entity_id=data.get("target_temp_entity_id", ""),
                 heating_state_entity_id=data.get("heating_state_entity_id", ""),
                 humidity_entity_id=data.get("humidity_entity_id"),
+                on_time_entity_id=data.get("on_time_entity_id"),
+                on_time_buffer_minutes=on_time_buffer_minutes,
+                use_statistics=use_statistics,
                 history_days=history_days,
             )
         except ValueError as e:
