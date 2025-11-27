@@ -114,6 +114,34 @@ curl -X POST http://homeassistant:5000/api/v1/train/device \
   }'
 ```
 
+##### Using "On Time" Sensor for Heating Detection
+
+By default, heating cycles are detected using the `heating_state_entity_id` (hvac_mode/hvac_action). However, Home Assistant limits precise state history to ~10 days. For longer data retention, you can use the thermostat's "On Time" sensor with the Home Assistant statistics API.
+
+The "On Time" sensor reports seconds of heating activity. Since radiators don't heat continuously (they cycle on/off), a buffer mechanism prevents false cycle ends during short heating pauses.
+
+```bash
+curl -X POST http://homeassistant:5000/api/v1/train/device \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "ihp_salon",
+    "indoor_temp_entity_id": "sensor.salon_temperature",
+    "outdoor_temp_entity_id": "sensor.outdoor_temperature",
+    "target_temp_entity_id": "climate.vtherm_salon",
+    "heating_state_entity_id": "climate.vtherm_salon",
+    "humidity_entity_id": "sensor.salon_humidity",
+    "on_time_entity_id": "sensor.thermostat_salon_on_time",
+    "on_time_buffer_minutes": 15,
+    "use_statistics": true,
+    "history_days": 60
+  }'
+```
+
+**Parameters:**
+- `on_time_entity_id`: Entity ID for the thermostat's "On Time" sensor (optional). The sensor should have `state_class: measurement` and `device_class: duration`.
+- `on_time_buffer_minutes`: Buffer time in minutes (default: 15). If heating doesn't activate for this duration, consider it off. Valid range: 1-60.
+- `use_statistics`: If `true`, use Home Assistant's statistics API for longer data retention (>10 days). Requires `on_time_entity_id`.
+
 Response:
 ```json
 {
