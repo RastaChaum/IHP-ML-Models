@@ -513,16 +513,19 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     # Heating turned off
                     cycle_ended = True
                     end_reason = "heating_off"
+                    start_target_temp = current_indoor  # Record final target temp as current indoor
                 elif current_indoor is not None and current_target is not None:
                     temp_delta = current_target - current_indoor
-                    if temp_delta <= TEMP_DELTA_THRESHOLD:
-                        # Target reached (within threshold)
-                        cycle_ended = True
-                        end_reason = "target_reached"
-                    elif current_indoor > current_target:
+                    if current_indoor > current_target:
                         # Temperature exceeded target
                         cycle_ended = True
                         end_reason = "target_exceeded"
+                        start_target_temp = current_indoor  # Record final target temp as current indoor
+                    elif temp_delta <= TEMP_DELTA_THRESHOLD:
+                        # Target reached (within threshold)
+                        cycle_ended = True
+                        end_reason = "target_reached"
+                        start_target_temp = current_indoor  # Record final target temp as current indoor
 
                 if cycle_ended:
                     _LOGGER.debug(
