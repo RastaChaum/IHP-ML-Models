@@ -139,6 +139,53 @@ class TestDeviceConfig:
         with pytest.raises(AttributeError):
             config.device_id = "new_id"  # type: ignore
 
+    def test_device_config_with_cycle_split_duration(self) -> None:
+        """Test creating a device configuration with cycle split duration."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+            cycle_split_duration_minutes=60,
+        )
+        assert config.cycle_split_duration_minutes == 60
+
+    def test_device_config_without_cycle_split_duration(self) -> None:
+        """Test that cycle_split_duration_minutes defaults to None."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+        )
+        assert config.cycle_split_duration_minutes is None
+
+    def test_device_config_cycle_split_duration_too_low_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes < 10 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at least 10"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=5,
+            )
+
+    def test_device_config_cycle_split_duration_too_high_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes > 300 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at most 300"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=400,
+            )
+
 
 class TestTrainingDataPoint:
     """Tests for TrainingDataPoint value object."""

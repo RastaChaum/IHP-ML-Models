@@ -125,6 +125,11 @@ class MLApplicationService:
             device_config.device_id,
             device_config.history_days,
         )
+        if device_config.cycle_split_duration_minutes:
+            _LOGGER.info(
+                "Cycle splitting enabled: splitting cycles longer than %d minutes",
+                device_config.cycle_split_duration_minutes,
+            )
 
         # Calculate time range
         end_time = datetime.now()
@@ -139,6 +144,7 @@ class MLApplicationService:
             humidity_entity_id=device_config.humidity_entity_id,
             start_time=start_time,
             end_time=end_time,
+            cycle_split_duration_minutes=device_config.cycle_split_duration_minutes,
         )
 
         _LOGGER.info(
