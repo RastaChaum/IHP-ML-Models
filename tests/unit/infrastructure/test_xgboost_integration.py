@@ -76,9 +76,7 @@ class TestXGBoostIntegration:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            minutes_since_last_cycle=120,
         )
         result = await predictor.predict(request)
         
@@ -107,9 +105,7 @@ class TestXGBoostIntegration:
             target_temp=21.0,
             humidity=50.0,
             hour_of_day=12,
-            day_of_week=2,
-            week_of_month=2,
-            month=6,
+            minutes_since_last_cycle=60,
         )
         
         # Large temperature delta should result in longer duration
@@ -119,9 +115,7 @@ class TestXGBoostIntegration:
             target_temp=22.0,
             humidity=70.0,
             hour_of_day=6,
-            day_of_week=0,
-            week_of_month=1,
-            month=1,
+            minutes_since_last_cycle=120,
         )
         
         small_result = await predictor.predict(small_delta_request)
