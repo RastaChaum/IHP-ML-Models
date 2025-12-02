@@ -441,7 +441,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             ):
                 # Split the cycle into smaller sub-cycles
                 num_sub_cycles = int(duration_minutes / cycle_split_duration_minutes)
-                # Add one more sub-cycle if there's remaining time
+                # Calculate remaining time after full sub-cycles
                 remaining_minutes = duration_minutes - (num_sub_cycles * cycle_split_duration_minutes)
 
                 _LOGGER.debug(
@@ -454,7 +454,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
                 # Calculate temperature change per minute for linear interpolation
                 temp_delta = final_temp - start_indoor_temp
-                temp_per_minute = temp_delta / duration_minutes if duration_minutes > 0 else 0
+                temp_per_minute = temp_delta / duration_minutes
 
                 current_start_time = heating_start
                 current_start_temp = start_indoor_temp
