@@ -35,6 +35,7 @@ class XGBoostTrainer(IMLModelTrainer):
         "day_of_week",
         "week_of_month",
         "month",
+        "minutes_since_last_cycle",
     )
 
     def __init__(
@@ -178,6 +179,7 @@ class XGBoostTrainer(IMLModelTrainer):
                 dp.day_of_week,
                 dp.week_of_month,
                 dp.month,
+                dp.minutes_since_last_cycle,
             ]
             features.append(feature_row)
             labels.append(dp.heating_duration_minutes)

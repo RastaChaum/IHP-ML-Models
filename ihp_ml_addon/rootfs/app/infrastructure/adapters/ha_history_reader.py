@@ -415,6 +415,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 end_temp: The indoor temperature at the end of the cycle (optional)
             """
             nonlocal data_points
+            nonlocal last_cycle_end_time
             if heating_start is None:
                 return
 
@@ -458,6 +459,13 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
                 current_start_time = heating_start
                 current_start_temp = start_indoor_temp
+                # Minutes since last cycle applies to the first sub-cycle; subsequent are contiguous
+                minutes_since_prev = 0.0
+                if last_cycle_end_time is not None:
+                    minutes_since_prev = max(
+                        0.0,
+                        (current_start_time - last_cycle_end_time).total_seconds() / 60.0,
+                    )
 
                 for _ in range(num_sub_cycles):
                     sub_cycle_duration = float(cycle_split_duration_minutes)
@@ -475,6 +483,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                             day_of_week=current_start_time.weekday(),
                             week_of_month=get_week_of_month(current_start_time),
                             month=current_start_time.month,
+                            minutes_since_last_cycle=minutes_since_prev,
                             heating_duration_minutes=sub_cycle_duration,
                             timestamp=current_start_time,
                         )
@@ -485,6 +494,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     # Move to the next sub-cycle
                     current_start_time = sub_cycle_end_time
                     current_start_temp = sub_cycle_end_temp
+                    # After the first segment, subsequent are contiguous
+                    minutes_since_prev = 0.0
+                    # Update last cycle end time to this sub-cycle end
+                    last_cycle_end_time = sub_cycle_end_time
 
                 # Handle remaining time if significant (>= 5 minutes)
                 if remaining_minutes >= 5:
@@ -498,15 +511,25 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                             day_of_week=current_start_time.weekday(),
                             week_of_month=get_week_of_month(current_start_time),
                             month=current_start_time.month,
+                            minutes_since_last_cycle=0.0,
                             heating_duration_minutes=remaining_minutes,
                             timestamp=current_start_time,
                         )
                         data_points.append(data_point)
                     except ValueError as e:
                         _LOGGER.debug("Skipping invalid remaining sub-cycle data point: %s", e)
+                    # Update last cycle end time to this remaining sub-cycle end
+                    last_cycle_end_time = current_start_time + timedelta(minutes=remaining_minutes)
             else:
                 # No splitting - record the cycle as-is (original behavior)
                 try:
+                    # Compute minutes since the previous cycle ended
+                    minutes_since_prev = 0.0
+                    if last_cycle_end_time is not None:
+                        minutes_since_prev = max(
+                            0.0,
+                            (heating_start - last_cycle_end_time).total_seconds() / 60.0,
+                        )
                     data_point = TrainingDataPoint(
                         outdoor_temp=start_outdoor_temp,
                         indoor_temp=start_indoor_temp,
@@ -516,12 +539,18 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         day_of_week=heating_start.weekday(),
                         week_of_month=get_week_of_month(heating_start),
                         month=heating_start.month,
+                        minutes_since_last_cycle=minutes_since_prev,
                         heating_duration_minutes=duration_minutes,
                         timestamp=heating_start,
                     )
                     data_points.append(data_point)
                 except ValueError as e:
                     _LOGGER.debug("Skipping invalid data point: %s", e)
+            # Update the last cycle end time to the end of the recorded cycle
+            last_cycle_end_time = end_timestamp
+
+        # Track the end time of the last recorded cycle to compute gaps
+        last_cycle_end_time: datetime | None = None
 
         for state_record in heating_states:
             timestamp_str = state_record.get("last_changed") or state_record.get("last_updated")
