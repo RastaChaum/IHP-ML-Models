@@ -125,9 +125,9 @@ async def train_model() -> Response:
                 "target_temp": float,
                 "humidity": float,
                 "hour_of_day": int,
-                "day_of_week": int,
-                "week_of_month": int,
-                "month": int,
+                # "day_of_week": int,
+                # "week_of_month": int,
+                # "month": int,
                 "heating_duration_minutes": float,
                 "timestamp": str (ISO format)
             },
@@ -169,9 +169,9 @@ async def train_model() -> Response:
                 target_temp=float(dp["target_temp"]),
                 humidity=float(dp["humidity"]),
                 hour_of_day=int(dp["hour_of_day"]),
-                day_of_week=int(dp["day_of_week"]),
-                week_of_month=int(week_of_month),
-                month=int(month),
+                # day_of_week=int(dp["day_of_week"]),
+                # week_of_month=int(week_of_month),
+                # month=int(month),
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
                 timestamp=timestamp,
             ))
@@ -246,7 +246,10 @@ async def train_with_device_config() -> Response:
         "target_temp_entity_id": str,
         "heating_state_entity_id": str,
         "humidity_entity_id": str (optional),
-        "history_days": int (optional, default: 30)
+        "history_days": int (optional, default: 30),
+        "cycle_split_duration_minutes": int (optional) - if set, splits long
+            heating cycles into smaller sub-cycles of this duration (in minutes)
+            for more training data. Must be between 10 and 300 if set.
     }
     """
     try:
@@ -272,6 +275,17 @@ async def train_with_device_config() -> Response:
                     "error": f"Invalid history_days value: {history_days_raw}"
                 }), 400
 
+            # Safely parse cycle_split_duration_minutes (optional)
+            cycle_split_raw = data.get("cycle_split_duration_minutes")
+            cycle_split_duration_minutes = None
+            if cycle_split_raw is not None:
+                try:
+                    cycle_split_duration_minutes = int(cycle_split_raw)
+                except (ValueError, TypeError):
+                    return jsonify({
+                        "error": f"Invalid cycle_split_duration_minutes value: {cycle_split_raw}"
+                    }), 400
+
             device_config = DeviceConfig(
                 device_id=data.get("device_id", ""),
                 indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
@@ -280,6 +294,7 @@ async def train_with_device_config() -> Response:
                 heating_state_entity_id=data.get("heating_state_entity_id", ""),
                 humidity_entity_id=data.get("humidity_entity_id"),
                 history_days=history_days,
+                cycle_split_duration_minutes=cycle_split_duration_minutes,
             )
         except ValueError as e:
             return jsonify({"error": f"Invalid device configuration: {e}"}), 400
@@ -319,9 +334,9 @@ async def predict() -> Response:
         "target_temp": float,
         "humidity": float,
         "hour_of_day": int,
-        "day_of_week": int,
-        "week_of_month": int,
-        "month": int,
+        # "day_of_week": int,
+        # "week_of_month": int,
+        # "month": int,
         "device_id": str (optional - for device-specific model selection),
         "model_id": str (optional - for specific model selection)
     }
@@ -343,9 +358,9 @@ async def predict() -> Response:
             target_temp=float(data["target_temp"]),
             humidity=float(data["humidity"]),
             hour_of_day=int(data["hour_of_day"]),
-            day_of_week=int(data["day_of_week"]),
-            week_of_month=int(data["week_of_month"]),
-            month=int(data["month"]),
+            # day_of_week=int(data["day_of_week"]),
+            # week_of_month=int(data["week_of_month"]),
+            # month=int(data["month"]),
             device_id=data.get("device_id"),
             model_id=data.get("model_id"),
         )

@@ -139,6 +139,53 @@ class TestDeviceConfig:
         with pytest.raises(AttributeError):
             config.device_id = "new_id"  # type: ignore
 
+    def test_device_config_with_cycle_split_duration(self) -> None:
+        """Test creating a device configuration with cycle split duration."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+            cycle_split_duration_minutes=60,
+        )
+        assert config.cycle_split_duration_minutes == 60
+
+    def test_device_config_without_cycle_split_duration(self) -> None:
+        """Test that cycle_split_duration_minutes defaults to None."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+        )
+        assert config.cycle_split_duration_minutes is None
+
+    def test_device_config_cycle_split_duration_too_low_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes < 10 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at least 10"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=5,
+            )
+
+    def test_device_config_cycle_split_duration_too_high_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes > 300 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at most 300"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=400,
+            )
+
 
 class TestTrainingDataPoint:
     """Tests for TrainingDataPoint value object."""
@@ -151,9 +198,9 @@ class TestTrainingDataPoint:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -162,9 +209,9 @@ class TestTrainingDataPoint:
         assert dp.target_temp == 21.0
         assert dp.humidity == 65.0
         assert dp.hour_of_day == 7
-        assert dp.day_of_week == 1
-        assert dp.week_of_month == 2
-        assert dp.month == 11
+        # assert dp.day_of_week == 1
+        # assert dp.week_of_month == 2
+        # assert dp.month == 11
         assert dp.heating_duration_minutes == 45.0
 
     def test_training_data_point_is_immutable(self) -> None:
@@ -175,9 +222,9 @@ class TestTrainingDataPoint:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -193,9 +240,9 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=65.0,
                 hour_of_day=7,
-                day_of_week=1,
-                week_of_month=2,
-                month=11,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -209,9 +256,9 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=150.0,  # Invalid: above 100
                 hour_of_day=7,
-                day_of_week=1,
-                week_of_month=2,
-                month=11,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -225,45 +272,12 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=65.0,
                 hour_of_day=7,
-                day_of_week=1,
-                week_of_month=2,
-                month=11,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=-10.0,  # Invalid: negative
                 timestamp=datetime.now(),
             )
-
-    def test_invalid_week_of_month_raises_error(self) -> None:
-        """Test that invalid week_of_month raises ValueError."""
-        with pytest.raises(ValueError, match="week_of_month"):
-            TrainingDataPoint(
-                outdoor_temp=5.0,
-                indoor_temp=18.0,
-                target_temp=21.0,
-                humidity=65.0,
-                hour_of_day=7,
-                day_of_week=1,
-                week_of_month=0,  # Invalid: below 1
-                month=11,
-                heating_duration_minutes=45.0,
-                timestamp=datetime.now(),
-            )
-
-    def test_invalid_month_raises_error(self) -> None:
-        """Test that invalid month raises ValueError."""
-        with pytest.raises(ValueError, match="month"):
-            TrainingDataPoint(
-                outdoor_temp=5.0,
-                indoor_temp=18.0,
-                target_temp=21.0,
-                humidity=65.0,
-                hour_of_day=7,
-                day_of_week=1,
-                week_of_month=2,
-                month=13,  # Invalid: above 12
-                heating_duration_minutes=45.0,
-                timestamp=datetime.now(),
-            )
-
 
 class TestTrainingData:
     """Tests for TrainingData value object."""
@@ -276,9 +290,9 @@ class TestTrainingData:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -303,14 +317,12 @@ class TestPredictionRequest:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
         )
         assert req.outdoor_temp == 5.0
         assert req.temp_delta == 3.0
-        assert req.week_of_month == 2
-        assert req.month == 11
 
     def test_prediction_request_is_immutable(self) -> None:
         """Test that PredictionRequest is immutable."""
@@ -320,9 +332,9 @@ class TestPredictionRequest:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
         )
         with pytest.raises(AttributeError):
             req.outdoor_temp = 10.0  # type: ignore
@@ -335,9 +347,9 @@ class TestPredictionRequest:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
-            week_of_month=2,
-            month=11,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             device_id="ihp_salon",
         )
         assert req.device_id == "ihp_salon"

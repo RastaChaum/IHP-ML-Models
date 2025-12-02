@@ -66,8 +66,6 @@ class FakeDataGenerator:
         """
         hour_of_day = timestamp.hour
         day_of_week = timestamp.weekday()
-        week_of_month = get_week_of_month(timestamp)
-        month = timestamp.month
 
         # Generate realistic environmental conditions
         outdoor_temp = self._generate_outdoor_temp(hour_of_day, day_of_week)
@@ -90,11 +88,9 @@ class FakeDataGenerator:
             target_temp=round(target_temp, 1),
             humidity=round(humidity, 1),
             hour_of_day=hour_of_day,
-            day_of_week=day_of_week,
-            week_of_month=week_of_month,
-            month=month,
             heating_duration_minutes=round(heating_duration, 1),
             timestamp=timestamp,
+            minutes_since_last_cycle=self._random.uniform(30, 240),
         )
 
     def _generate_outdoor_temp(self, hour: int, day: int) -> float:

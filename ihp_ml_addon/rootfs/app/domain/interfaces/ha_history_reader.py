@@ -26,6 +26,7 @@ class IHomeAssistantHistoryReader(ABC):
         humidity_entity_id: str | None,
         start_time: datetime,
         end_time: datetime,
+        cycle_split_duration_minutes: int | None = None,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -37,6 +38,9 @@ class IHomeAssistantHistoryReader(ABC):
             humidity_entity_id: Entity ID for humidity sensor (optional)
             start_time: Start of the time range for fetching history
             end_time: End of the time range for fetching history
+            cycle_split_duration_minutes: Optional duration in minutes to split
+                long heating cycles into smaller sub-cycles. If None, cycles
+                are not split.
 
         Returns:
             TrainingData with extracted heating cycles
