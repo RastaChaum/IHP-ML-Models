@@ -32,9 +32,9 @@ class XGBoostTrainer(IMLModelTrainer):
         "temp_delta",
         "humidity",
         "hour_of_day",
-        "day_of_week",
-        "week_of_month",
-        "month",
+        # "day_of_week",
+        # "week_of_month",
+        # "month",
         "minutes_since_last_cycle",
     )
 
@@ -176,9 +176,6 @@ class XGBoostTrainer(IMLModelTrainer):
                 temp_delta,
                 dp.humidity,
                 dp.hour_of_day,
-                dp.day_of_week,
-                dp.week_of_month,
-                dp.month,
                 dp.minutes_since_last_cycle,
             ]
             features.append(feature_row)
