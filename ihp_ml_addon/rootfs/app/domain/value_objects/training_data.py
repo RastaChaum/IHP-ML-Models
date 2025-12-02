@@ -45,9 +45,9 @@ class TrainingDataPoint:
     target_temp: float
     humidity: float
     hour_of_day: int
-    day_of_week: int
-    week_of_month: int
-    month: int
+    # day_of_week: int
+    # week_of_month: int
+    # month: int
     heating_duration_minutes: float
     timestamp: datetime
     minutes_since_last_cycle: float = 0.0
@@ -64,12 +64,12 @@ class TrainingDataPoint:
             raise ValueError(f"humidity must be between 0 and 100, got {self.humidity}")
         if not 0 <= self.hour_of_day <= 23:
             raise ValueError(f"hour_of_day must be between 0 and 23, got {self.hour_of_day}")
-        if not 0 <= self.day_of_week <= 6:
-            raise ValueError(f"day_of_week must be between 0 and 6, got {self.day_of_week}")
-        if not 1 <= self.week_of_month <= 5:
-            raise ValueError(f"week_of_month must be between 1 and 5, got {self.week_of_month}")
-        if not 1 <= self.month <= 12:
-            raise ValueError(f"month must be between 1 and 12, got {self.month}")
+        # if not 0 <= self.day_of_week <= 6:
+        #     raise ValueError(f"day_of_week must be between 0 and 6, got {self.day_of_week}")
+        # if not 1 <= self.week_of_month <= 5:
+        #     raise ValueError(f"week_of_month must be between 1 and 5, got {self.week_of_month}")
+        # if not 1 <= self.month <= 12:
+        #     raise ValueError(f"month must be between 1 and 12, got {self.month}")
         if self.minutes_since_last_cycle < 0:
             raise ValueError(
                 f"minutes_since_last_cycle must be non-negative, got {self.minutes_since_last_cycle}"

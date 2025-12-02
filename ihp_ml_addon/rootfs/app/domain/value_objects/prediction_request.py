@@ -16,9 +16,6 @@ class PredictionRequest:
         target_temp: Target temperature in °C
         humidity: Relative humidity percentage (0-100)
         hour_of_day: Hour of the day (0-23)
-        day_of_week: Day of week (0=Monday, 6=Sunday)
-        week_of_month: Week of the month (1-5)
-        month: Month of the year (1-12)
         device_id: Device/thermostat ID for model selection (optional)
         model_id: Optional model identifier (uses latest for device if not specified)
     """
@@ -28,11 +25,9 @@ class PredictionRequest:
     target_temp: float
     humidity: float
     hour_of_day: int
-    day_of_week: int
-    week_of_month: int
-    month: int
     device_id: str | None = None
     model_id: str | None = None
+    minutes_since_last_cycle: float | None = None
 
     def __post_init__(self) -> None:
         """Validate prediction request values."""
@@ -46,13 +41,9 @@ class PredictionRequest:
             raise ValueError(f"humidity must be between 0 and 100, got {self.humidity}")
         if not 0 <= self.hour_of_day <= 23:
             raise ValueError(f"hour_of_day must be between 0 and 23, got {self.hour_of_day}")
-        if not 0 <= self.day_of_week <= 6:
-            raise ValueError(f"day_of_week must be between 0 and 6, got {self.day_of_week}")
-        if not 1 <= self.week_of_month <= 5:
-            raise ValueError(f"week_of_month must be between 1 and 5, got {self.week_of_month}")
-        if not 1 <= self.month <= 12:
-            raise ValueError(f"month must be between 1 and 12, got {self.month}")
-
+        if self.minutes_since_last_cycle is not None and self.minutes_since_last_cycle < 0:
+            raise ValueError(f"minutes_since_last_cycle must be non-negative, got {self.minutes_since_last_cycle}")
+ 
     @property
     def temp_delta(self) -> float:
         """Calculate temperature difference to target."""
