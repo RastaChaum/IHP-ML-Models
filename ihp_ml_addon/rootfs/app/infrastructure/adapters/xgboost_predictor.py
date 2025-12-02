@@ -118,6 +118,8 @@ class XGBoostPredictor(IMLModelPredictor):
             Numpy array with features
         """
         temp_delta = request.target_temp - request.indoor_temp
+        # Default to 0 if minutes_since_last_cycle not provided
+        minutes_since_last_cycle = request.minutes_since_last_cycle or 0.0
         features = [
             request.outdoor_temp,
             request.indoor_temp,
@@ -125,9 +127,7 @@ class XGBoostPredictor(IMLModelPredictor):
             temp_delta,
             request.humidity,
             request.hour_of_day,
-            request.day_of_week,
-            request.week_of_month,
-            request.month,
+            minutes_since_last_cycle,
         ]
         return np.array([features])
 
