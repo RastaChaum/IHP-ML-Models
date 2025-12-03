@@ -1,8 +1,7 @@
 """Tests for fake data generator service."""
 
-import pytest
-from datetime import datetime
 
+import pytest
 from domain.services import FakeDataGenerator
 
 
@@ -43,7 +42,6 @@ class TestFakeDataGenerator:
             
             # Check time values
             assert 0 <= dp.hour_of_day <= 23
-            assert 0 <= dp.day_of_week <= 6
             
             # Check heating duration is positive
             assert dp.heating_duration_minutes >= 0

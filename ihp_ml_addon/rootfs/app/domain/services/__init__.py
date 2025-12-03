@@ -3,8 +3,8 @@
 Services contain pure business logic and operate on value objects.
 """
 
-from .heating_prediction_service import HeatingPredictionService
 from .fake_data_generator import FakeDataGenerator
+from .heating_prediction_service import HeatingPredictionService
 
 __all__ = [
     "HeatingPredictionService",

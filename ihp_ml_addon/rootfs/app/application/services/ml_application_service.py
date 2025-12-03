@@ -56,20 +56,24 @@ class MLApplicationService:
         self._fake_data_generator = FakeDataGenerator()
         self._ha_history_reader = ha_history_reader
 
-    async def train_with_data(self, training_data: TrainingData) -> ModelInfo:
+    async def train_with_data(
+        self, training_data: TrainingData, device_id: str | None = None
+    ) -> ModelInfo:
         """Train a model with provided training data.
 
         Args:
             training_data: Training data with features and labels
+            device_id: Optional device ID for device-specific model
 
         Returns:
             Information about the trained model
         """
         _LOGGER.info(
-            "Starting model training with %d samples",
+            "Starting model training with %d samples (device: %s)",
             training_data.size,
+            device_id,
         )
-        model_info = await self._prediction_service.train_model(training_data)
+        model_info = await self._prediction_service.train_model(training_data, device_id)
         _LOGGER.info(
             "Model training completed: %s, metrics: %s",
             model_info.model_id,
@@ -121,6 +125,11 @@ class MLApplicationService:
             device_config.device_id,
             device_config.history_days,
         )
+        if device_config.cycle_split_duration_minutes:
+            _LOGGER.info(
+                "Cycle splitting enabled: splitting cycles longer than %d minutes",
+                device_config.cycle_split_duration_minutes,
+            )
 
         # Calculate time range
         end_time = datetime.now()
@@ -135,6 +144,7 @@ class MLApplicationService:
             humidity_entity_id=device_config.humidity_entity_id,
             start_time=start_time,
             end_time=end_time,
+            cycle_split_duration_minutes=device_config.cycle_split_duration_minutes,
         )
 
         _LOGGER.info(
@@ -143,7 +153,7 @@ class MLApplicationService:
             device_config.device_id,
         )
 
-        return await self.train_with_data(training_data)
+        return await self.train_with_data(training_data, device_id=device_config.device_id)
 
     async def is_ha_available(self) -> bool:
         """Check if Home Assistant integration is available.
@@ -235,6 +245,17 @@ class MLApplicationService:
             List of model information objects
         """
         return await self._storage.list_models()
+
+    async def list_models_for_device(self, device_id: str) -> list[ModelInfo]:
+        """List all available models for a specific device.
+
+        Args:
+            device_id: Device/thermostat identifier
+
+        Returns:
+            List of model information objects for the device
+        """
+        return await self._storage.list_models_for_device(device_id)
 
     async def delete_model(self, model_id: str) -> None:
         """Delete a model.

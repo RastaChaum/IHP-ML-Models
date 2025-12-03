@@ -5,10 +5,10 @@ Domain service for orchestrating ML predictions for heating duration.
 
 from domain.interfaces import IMLModelPredictor, IMLModelTrainer, IModelStorage
 from domain.value_objects import (
+    ModelInfo,
     PredictionRequest,
     PredictionResult,
     TrainingData,
-    ModelInfo,
 )
 
 
@@ -36,16 +36,19 @@ class HeatingPredictionService:
         self._predictor = predictor
         self._storage = storage
 
-    async def train_model(self, training_data: TrainingData) -> ModelInfo:
+    async def train_model(
+        self, training_data: TrainingData, device_id: str | None = None
+    ) -> ModelInfo:
         """Train a new heating prediction model.
 
         Args:
             training_data: Training data with features and labels
+            device_id: Optional device ID for device-specific model
 
         Returns:
             Information about the trained model
         """
-        return await self._trainer.train(training_data)
+        return await self._trainer.train(training_data, device_id)
 
     async def predict_heating_duration(
         self,

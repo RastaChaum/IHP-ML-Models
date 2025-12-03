@@ -19,7 +19,13 @@ from flask import Flask, Response, jsonify, request
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from application.services import MLApplicationService
-from domain.value_objects import DeviceConfig, PredictionRequest, TrainingData, TrainingDataPoint
+from domain.value_objects import (
+    DeviceConfig,
+    PredictionRequest,
+    TrainingData,
+    TrainingDataPoint,
+    get_week_of_month,
+)
 from infrastructure.adapters import (
     FileModelStorage,
     HomeAssistantHistoryReader,
@@ -111,6 +117,7 @@ async def train_model() -> Response:
 
     Request body:
     {
+        "device_id": str (optional - for device-specific model),
         "data_points": [
             {
                 "outdoor_temp": float,
@@ -118,7 +125,9 @@ async def train_model() -> Response:
                 "target_temp": float,
                 "humidity": float,
                 "hour_of_day": int,
-                "day_of_week": int,
+                # "day_of_week": int,
+                # "week_of_month": int,
+                # "month": int,
                 "heating_duration_minutes": float,
                 "timestamp": str (ISO format)
             },
@@ -135,6 +144,8 @@ async def train_model() -> Response:
         if not data_points_raw:
             return jsonify({"error": "No data points provided"}), 400
 
+        device_id = data.get("device_id")
+
         # Parse data points
         data_points = []
         for dp in data_points_raw:
@@ -143,23 +154,36 @@ async def train_model() -> Response:
             except (KeyError, ValueError):
                 timestamp = datetime.now()
 
+            # Calculate week_of_month and month from timestamp if not provided
+            week_of_month = dp.get("week_of_month")
+            if week_of_month is None:
+                week_of_month = get_week_of_month(timestamp)
+
+            month = dp.get("month")
+            if month is None:
+                month = timestamp.month
+
             data_points.append(TrainingDataPoint(
                 outdoor_temp=float(dp["outdoor_temp"]),
                 indoor_temp=float(dp["indoor_temp"]),
                 target_temp=float(dp["target_temp"]),
                 humidity=float(dp["humidity"]),
                 hour_of_day=int(dp["hour_of_day"]),
-                day_of_week=int(dp["day_of_week"]),
+                # day_of_week=int(dp["day_of_week"]),
+                # week_of_month=int(week_of_month),
+                # month=int(month),
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
+                minutes_since_last_cycle=float(dp.get("minutes_since_last_cycle", 0.0)),
                 timestamp=timestamp,
             ))
 
         training_data = TrainingData.from_sequence(data_points)
-        model_info = await ml_service.train_with_data(training_data)
+        model_info = await ml_service.train_with_data(training_data, device_id=device_id)
 
         return jsonify({
             "success": True,
             "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
             "created_at": model_info.created_at.isoformat(),
             "training_samples": model_info.training_samples,
             "metrics": model_info.metrics,
@@ -223,7 +247,10 @@ async def train_with_device_config() -> Response:
         "target_temp_entity_id": str,
         "heating_state_entity_id": str,
         "humidity_entity_id": str (optional),
-        "history_days": int (optional, default: 30)
+        "history_days": int (optional, default: 30),
+        "cycle_split_duration_minutes": int (optional) - if set, splits long
+            heating cycles into smaller sub-cycles of this duration (in minutes)
+            for more training data. Must be between 10 and 300 if set.
     }
     """
     try:
@@ -249,6 +276,17 @@ async def train_with_device_config() -> Response:
                     "error": f"Invalid history_days value: {history_days_raw}"
                 }), 400
 
+            # Safely parse cycle_split_duration_minutes (optional)
+            cycle_split_raw = data.get("cycle_split_duration_minutes")
+            cycle_split_duration_minutes = None
+            if cycle_split_raw is not None:
+                try:
+                    cycle_split_duration_minutes = int(cycle_split_raw)
+                except (ValueError, TypeError):
+                    return jsonify({
+                        "error": f"Invalid cycle_split_duration_minutes value: {cycle_split_raw}"
+                    }), 400
+
             device_config = DeviceConfig(
                 device_id=data.get("device_id", ""),
                 indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
@@ -257,6 +295,7 @@ async def train_with_device_config() -> Response:
                 heating_state_entity_id=data.get("heating_state_entity_id", ""),
                 humidity_entity_id=data.get("humidity_entity_id"),
                 history_days=history_days,
+                cycle_split_duration_minutes=cycle_split_duration_minutes,
             )
         except ValueError as e:
             return jsonify({"error": f"Invalid device configuration: {e}"}), 400
@@ -296,8 +335,12 @@ async def predict() -> Response:
         "target_temp": float,
         "humidity": float,
         "hour_of_day": int,
-        "day_of_week": int,
-        "model_id": str (optional)
+        # "day_of_week": int,
+        # "week_of_month": int,
+        # "month": int,
+        "minutes_since_last_cycle": float (optional - time since last heating cycle),
+        "device_id": str (optional - for device-specific model selection),
+        "model_id": str (optional - for specific model selection)
     }
     """
     try:
@@ -317,7 +360,11 @@ async def predict() -> Response:
             target_temp=float(data["target_temp"]),
             humidity=float(data["humidity"]),
             hour_of_day=int(data["hour_of_day"]),
-            day_of_week=int(data["day_of_week"]),
+            # day_of_week=int(data["day_of_week"]),
+            # week_of_month=int(data["week_of_month"]),
+            # month=int(data["month"]),
+            minutes_since_last_cycle=float(data["minutes_since_last_cycle"]) if "minutes_since_last_cycle" in data else None,
+            device_id=data.get("device_id"),
             model_id=data.get("model_id"),
         )
 
@@ -352,6 +399,7 @@ async def list_models() -> Response:
             "models": [
                 {
                     "model_id": m.model_id,
+                    "device_id": m.device_id,
                     "created_at": m.created_at.isoformat(),
                     "training_samples": m.training_samples,
                     "metrics": m.metrics,
@@ -362,6 +410,31 @@ async def list_models() -> Response:
         })
     except Exception as e:
         _LOGGER.exception("Error listing models")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/models/device/<device_id>", methods=["GET"])
+@async_route
+async def list_models_for_device(device_id: str) -> Response:
+    """List all available models for a specific device/thermostat."""
+    try:
+        models = await ml_service.list_models_for_device(device_id)
+        return jsonify({
+            "device_id": device_id,
+            "models": [
+                {
+                    "model_id": m.model_id,
+                    "device_id": m.device_id,
+                    "created_at": m.created_at.isoformat(),
+                    "training_samples": m.training_samples,
+                    "metrics": m.metrics,
+                    "version": m.version,
+                }
+                for m in models
+            ]
+        })
+    except Exception as e:
+        _LOGGER.exception("Error listing models for device")
         return jsonify({"error": str(e)}), 500
 
 
@@ -376,6 +449,7 @@ async def get_model(model_id: str) -> Response:
 
         return jsonify({
             "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
             "created_at": model_info.created_at.isoformat(),
             "training_samples": model_info.training_samples,
             "feature_names": list(model_info.feature_names),

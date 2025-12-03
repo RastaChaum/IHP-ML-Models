@@ -7,7 +7,7 @@ import random
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from domain.value_objects import TrainingData, TrainingDataPoint
+from domain.value_objects import TrainingData, TrainingDataPoint, get_week_of_month
 
 
 class FakeDataGenerator:
@@ -88,9 +88,9 @@ class FakeDataGenerator:
             target_temp=round(target_temp, 1),
             humidity=round(humidity, 1),
             hour_of_day=hour_of_day,
-            day_of_week=day_of_week,
             heating_duration_minutes=round(heating_duration, 1),
             timestamp=timestamp,
+            minutes_since_last_cycle=self._random.uniform(30, 240),
         )
 
     def _generate_outdoor_temp(self, hour: int, day: int) -> float:

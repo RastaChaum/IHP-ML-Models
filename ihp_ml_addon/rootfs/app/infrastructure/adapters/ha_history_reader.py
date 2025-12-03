@@ -11,14 +11,13 @@ For a production system with high concurrency, consider using aiohttp.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
-
 from domain.interfaces import IHomeAssistantHistoryReader
-from domain.value_objects import TrainingData, TrainingDataPoint
+from domain.value_objects import TrainingData, TrainingDataPoint, get_week_of_month
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,6 +104,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         humidity_entity_id: str | None,
         start_time: datetime,
         end_time: datetime,
+        cycle_split_duration_minutes: int | None = None,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -113,7 +113,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         2. Aligns timestamps across sensors
         3. Identifies heating cycles (when heating turned on/off)
         4. Calculates heating duration for each cycle
-        5. Returns TrainingData for model training
+        5. Optionally splits long cycles into smaller sub-cycles
+        6. Returns TrainingData for model training
 
         Args:
             indoor_temp_entity_id: Entity ID for indoor temperature sensor
@@ -123,6 +124,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             humidity_entity_id: Entity ID for humidity sensor (optional)
             start_time: Start of the time range for fetching history
             end_time: End of the time range for fetching history
+            cycle_split_duration_minutes: Optional duration in minutes to split
+                long heating cycles into smaller sub-cycles. If None, cycles
+                are not split.
 
         Returns:
             TrainingData with extracted heating cycles
@@ -147,6 +151,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             target_temp_entity_id,
             heating_state_entity_id,
             humidity_entity_id,
+            cycle_split_duration_minutes,
         )
 
         if not data_points:
@@ -319,12 +324,19 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         target_temp_entity_id: str,
         heating_state_entity_id: str,
         humidity_entity_id: str | None,
+        cycle_split_duration_minutes: int | None = None,
     ) -> list[TrainingDataPoint]:
         """Extract heating cycles from historical data.
 
         A heating cycle is defined as:
         - START: Heating is ON AND temperature delta (target - current) > 0.2°C
         - END: Heating is OFF OR temperature delta <= 0.2°C OR current temp exceeds target
+
+        If cycle_split_duration_minutes is provided, long heating cycles will be
+        split into smaller sub-cycles. For example, a 3-hour cycle with a split
+        duration of 60 minutes will be split into 3 sub-cycles of 60 minutes each.
+        The target temperature for each sub-cycle is calculated by linear
+        interpolation between the start and end temperatures.
 
         Args:
             history_data: Dictionary of entity_id -> history records
@@ -333,6 +345,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             target_temp_entity_id: Entity ID for target temperature
             heating_state_entity_id: Entity ID for heating state
             humidity_entity_id: Entity ID for humidity (optional)
+            cycle_split_duration_minutes: Optional duration in minutes to split
+                long heating cycles into smaller sub-cycles. If None, cycles
+                are not split.
 
         Returns:
             List of TrainingDataPoint objects
@@ -351,6 +366,26 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         # Get temperature histories for cycle end detection
         indoor_temp_history = history_data.get(indoor_temp_entity_id, [])
         target_temp_history = history_data.get(target_temp_entity_id, [])
+        
+        # Detect entity types to determine how to extract values
+        # Check if entities are climate entities (with attributes) or sensors (state only)
+        def is_climate_entity(entity_id: str) -> bool:
+            """Check if entity is a climate entity."""
+            return entity_id.startswith("climate.")
+
+        indoor_is_climate = is_climate_entity(indoor_temp_entity_id)
+        outdoor_is_climate = is_climate_entity(outdoor_temp_entity_id)
+        target_is_climate = is_climate_entity(target_temp_entity_id)
+        heating_is_climate = is_climate_entity(heating_state_entity_id)
+        humidity_is_climate = humidity_entity_id and is_climate_entity(humidity_entity_id)
+
+        _LOGGER.debug("Entity type detection:")
+        _LOGGER.debug("  Indoor temp: %s (climate=%s)", indoor_temp_entity_id, indoor_is_climate)
+        _LOGGER.debug("  Outdoor temp: %s (climate=%s)", outdoor_temp_entity_id, outdoor_is_climate)
+        _LOGGER.debug("  Target temp: %s (climate=%s)", target_temp_entity_id, target_is_climate)
+        _LOGGER.debug("  Heating state: %s (climate=%s)", heating_state_entity_id, heating_is_climate)
+        if cycle_split_duration_minutes:
+            _LOGGER.debug("  Cycle split duration: %d minutes", cycle_split_duration_minutes)
 
         # Detect entity types to determine how to extract values
         # Check if entities are climate entities (with attributes) or sensors (state only)
@@ -387,36 +422,153 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             start_humidity = None
             start_target_temp = None
 
-        def record_cycle(end_timestamp: datetime) -> None:
-            """Record a completed heating cycle."""
+        def record_cycle(end_timestamp: datetime, end_temp: float | None = None) -> None:
+            """Record a completed heating cycle.
+
+            If cycle_split_duration_minutes is set and the cycle is longer than
+            that duration, it will be split into multiple sub-cycles.
+
+            Args:
+                end_timestamp: The timestamp when the cycle ended
+                end_temp: The indoor temperature at the end of the cycle (optional)
+            """
             nonlocal data_points
+            nonlocal last_cycle_end_time
             if heating_start is None:
                 return
 
             duration_minutes = (end_timestamp - heating_start).total_seconds() / 60.0
 
             # Only use cycles with valid data
-            if (
+            if not (
                 start_indoor_temp is not None
                 and start_outdoor_temp is not None
                 and start_target_temp is not None
                 and duration_minutes > 0
                 and duration_minutes < 300  # Max 5 hours for a single cycle
             ):
+                return
+
+            # Use end_temp if provided (for cycle splitting), otherwise use start_target_temp
+            final_temp = end_temp if end_temp is not None else start_target_temp
+
+            # Check if we should split this cycle
+            if (
+                cycle_split_duration_minutes is not None
+                and duration_minutes > cycle_split_duration_minutes
+                and final_temp is not None
+            ):
+                # Split the cycle into smaller sub-cycles
+                num_sub_cycles = int(duration_minutes / cycle_split_duration_minutes)
+                # Calculate remaining time after full sub-cycles
+                remaining_minutes = duration_minutes - (num_sub_cycles * cycle_split_duration_minutes)
+
+                _LOGGER.debug(
+                    "Splitting %d-minute cycle into %d sub-cycles of %d minutes (remaining: %.1f min)",
+                    int(duration_minutes),
+                    num_sub_cycles + (1 if remaining_minutes >= 5 else 0),
+                    cycle_split_duration_minutes,
+                    remaining_minutes,
+                )
+
+                # Calculate temperature change per minute for linear interpolation
+                temp_delta = final_temp - start_indoor_temp
+                temp_per_minute = temp_delta / duration_minutes
+
+                current_start_time = heating_start
+                current_start_temp = start_indoor_temp
+                # Minutes since last cycle applies to the first sub-cycle; subsequent are contiguous
+                minutes_since_prev = 0.0
+                if last_cycle_end_time is not None:
+                    minutes_since_prev = max(
+                        0.0,
+                        (current_start_time - last_cycle_end_time).total_seconds() / 60.0,
+                    )
+
+                for _ in range(num_sub_cycles):
+                    sub_cycle_duration = float(cycle_split_duration_minutes)
+                    sub_cycle_end_time = current_start_time + timedelta(minutes=sub_cycle_duration)
+                    # Calculate the temperature reached at the end of this sub-cycle
+                    sub_cycle_end_temp = current_start_temp + (temp_per_minute * sub_cycle_duration)
+
+                    try:
+                        data_point = TrainingDataPoint(
+                            outdoor_temp=start_outdoor_temp,
+                            indoor_temp=current_start_temp,
+                            target_temp=sub_cycle_end_temp,
+                            humidity=start_humidity or 50.0,
+                            hour_of_day=current_start_time.hour,
+                            # day_of_week=current_start_time.weekday(),
+                            # week_of_month=get_week_of_month(current_start_time),
+                            # month=current_start_time.month,
+                            minutes_since_last_cycle=minutes_since_prev,
+                            heating_duration_minutes=sub_cycle_duration,
+                            timestamp=current_start_time,
+                        )
+                        data_points.append(data_point)
+                    except ValueError as e:
+                        _LOGGER.debug("Skipping invalid sub-cycle data point: %s", e)
+
+                    # Move to the next sub-cycle
+                    current_start_time = sub_cycle_end_time
+                    current_start_temp = sub_cycle_end_temp
+                    # After the first segment, subsequent are contiguous
+                    minutes_since_prev = 0.0
+                    # Update last cycle end time to this sub-cycle end
+                    last_cycle_end_time = sub_cycle_end_time
+
+                # Handle remaining time if significant (>= 5 minutes)
+                if remaining_minutes >= 5:
+                    try:
+                        data_point = TrainingDataPoint(
+                            outdoor_temp=start_outdoor_temp,
+                            indoor_temp=current_start_temp,
+                            target_temp=final_temp,
+                            humidity=start_humidity or 50.0,
+                            hour_of_day=current_start_time.hour,
+                            # day_of_week=current_start_time.weekday(),
+                            # week_of_month=get_week_of_month(current_start_time),
+                            # month=current_start_time.month,
+                            minutes_since_last_cycle=0.0,
+                            heating_duration_minutes=remaining_minutes,
+                            timestamp=current_start_time,
+                        )
+                        data_points.append(data_point)
+                    except ValueError as e:
+                        _LOGGER.debug("Skipping invalid remaining sub-cycle data point: %s", e)
+                    # Update last cycle end time to this remaining sub-cycle end
+                    last_cycle_end_time = current_start_time + timedelta(minutes=remaining_minutes)
+            else:
+                # No splitting - record the cycle as-is (original behavior)
                 try:
+                    # Compute minutes since the previous cycle ended
+                    minutes_since_prev = 0.0
+                    if last_cycle_end_time is not None:
+                        minutes_since_prev = max(
+                            0.0,
+                            (heating_start - last_cycle_end_time).total_seconds() / 60.0,
+                        )
                     data_point = TrainingDataPoint(
                         outdoor_temp=start_outdoor_temp,
                         indoor_temp=start_indoor_temp,
-                        target_temp=start_target_temp,
+                        target_temp=final_temp,
                         humidity=start_humidity or 50.0,
                         hour_of_day=heating_start.hour,
-                        day_of_week=heating_start.weekday(),
+                        # day_of_week=heating_start.weekday(),
+                        # week_of_month=get_week_of_month(heating_start),
+                        # month=heating_start.month,
+                        minutes_since_last_cycle=minutes_since_prev,
                         heating_duration_minutes=duration_minutes,
                         timestamp=heating_start,
                     )
                     data_points.append(data_point)
                 except ValueError as e:
                     _LOGGER.debug("Skipping invalid data point: %s", e)
+            # Update the last cycle end time to the end of the recorded cycle
+            last_cycle_end_time = end_timestamp
+
+        # Track the end time of the last recorded cycle to compute gaps
+        last_cycle_end_time: datetime | None = None
 
         for state_record in heating_states:
             timestamp_str = state_record.get("last_changed") or state_record.get("last_updated")
@@ -512,16 +664,19 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     # Heating turned off
                     cycle_ended = True
                     end_reason = "heating_off"
+                    start_target_temp = current_indoor  # Record final target temp as current indoor
                 elif current_indoor is not None and current_target is not None:
                     temp_delta = current_target - current_indoor
-                    if temp_delta <= TEMP_DELTA_THRESHOLD:
-                        # Target reached (within threshold)
-                        cycle_ended = True
-                        end_reason = "target_reached"
-                    elif current_indoor > current_target:
+                    if current_indoor > current_target:
                         # Temperature exceeded target
                         cycle_ended = True
                         end_reason = "target_exceeded"
+                        start_target_temp = current_indoor  # Record final target temp as current indoor
+                    elif temp_delta <= TEMP_DELTA_THRESHOLD:
+                        # Target reached (within threshold)
+                        cycle_ended = True
+                        end_reason = "target_reached"
+                        start_target_temp = current_indoor  # Record final target temp as current indoor
 
                 if cycle_ended:
                     _LOGGER.debug(
@@ -529,7 +684,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         timestamp.isoformat(),
                         end_reason,
                     )
-                    record_cycle(timestamp)
+                    record_cycle(timestamp, end_temp=current_indoor)
                     reset_cycle()
 
         _LOGGER.info("Extracted %d heating cycles", len(data_points))

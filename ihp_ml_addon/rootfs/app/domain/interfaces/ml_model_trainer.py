@@ -5,18 +5,21 @@ Contract for training ML models.
 
 from abc import ABC, abstractmethod
 
-from domain.value_objects import TrainingData, ModelInfo
+from domain.value_objects import ModelInfo, TrainingData
 
 
 class IMLModelTrainer(ABC):
     """Contract for ML model training operations."""
 
     @abstractmethod
-    async def train(self, training_data: TrainingData) -> ModelInfo:
+    async def train(
+        self, training_data: TrainingData, device_id: str | None = None
+    ) -> ModelInfo:
         """Train a new model with the provided data.
 
         Args:
             training_data: Training data containing features and labels
+            device_id: Optional device/thermostat ID for model association
 
         Returns:
             ModelInfo with details about the trained model

@@ -29,7 +29,7 @@ services:
       # Debugpy port for VSCode remote debugging
       - "5678:5678"
     environment:
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
       - MODEL_PERSISTENCE_PATH=/data/models
       - SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN:-}
       - SUPERVISOR_URL=${SUPERVISOR_URL:-http://homeassistant.local:8123}

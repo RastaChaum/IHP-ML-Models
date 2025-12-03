@@ -3,9 +3,9 @@
 These tests verify that value objects are immutable and properly validated.
 """
 
-import pytest
 from datetime import datetime
 
+import pytest
 from domain.value_objects import (
     DeviceConfig,
     ModelInfo,
@@ -13,7 +13,38 @@ from domain.value_objects import (
     PredictionResult,
     TrainingData,
     TrainingDataPoint,
+    get_week_of_month,
 )
+
+
+class TestGetWeekOfMonth:
+    """Tests for get_week_of_month utility function."""
+
+    def test_first_week_of_month(self) -> None:
+        """Test that days 1-7 are in week 1."""
+        assert get_week_of_month(datetime(2024, 11, 1)) == 1
+        assert get_week_of_month(datetime(2024, 11, 7)) == 1
+
+    def test_second_week_of_month(self) -> None:
+        """Test that days 8-14 are in week 2."""
+        assert get_week_of_month(datetime(2024, 11, 8)) == 2
+        assert get_week_of_month(datetime(2024, 11, 14)) == 2
+
+    def test_third_week_of_month(self) -> None:
+        """Test that days 15-21 are in week 3."""
+        assert get_week_of_month(datetime(2024, 11, 15)) == 3
+        assert get_week_of_month(datetime(2024, 11, 21)) == 3
+
+    def test_fourth_week_of_month(self) -> None:
+        """Test that days 22-28 are in week 4."""
+        assert get_week_of_month(datetime(2024, 11, 22)) == 4
+        assert get_week_of_month(datetime(2024, 11, 28)) == 4
+
+    def test_fifth_week_capped(self) -> None:
+        """Test that days 29-31 are in week 5 (capped)."""
+        assert get_week_of_month(datetime(2024, 11, 29)) == 5
+        assert get_week_of_month(datetime(2024, 11, 30)) == 5
+        assert get_week_of_month(datetime(2024, 1, 31)) == 5
 
 
 class TestDeviceConfig:
@@ -108,6 +139,53 @@ class TestDeviceConfig:
         with pytest.raises(AttributeError):
             config.device_id = "new_id"  # type: ignore
 
+    def test_device_config_with_cycle_split_duration(self) -> None:
+        """Test creating a device configuration with cycle split duration."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+            cycle_split_duration_minutes=60,
+        )
+        assert config.cycle_split_duration_minutes == 60
+
+    def test_device_config_without_cycle_split_duration(self) -> None:
+        """Test that cycle_split_duration_minutes defaults to None."""
+        config = DeviceConfig(
+            device_id="ihp_test",
+            indoor_temp_entity_id="sensor.temp",
+            outdoor_temp_entity_id="sensor.outdoor",
+            target_temp_entity_id="climate.vtherm",
+            heating_state_entity_id="climate.vtherm",
+        )
+        assert config.cycle_split_duration_minutes is None
+
+    def test_device_config_cycle_split_duration_too_low_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes < 10 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at least 10"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=5,
+            )
+
+    def test_device_config_cycle_split_duration_too_high_raises_error(self) -> None:
+        """Test that cycle_split_duration_minutes > 300 raises ValueError."""
+        with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at most 300"):
+            DeviceConfig(
+                device_id="ihp_test",
+                indoor_temp_entity_id="sensor.temp",
+                outdoor_temp_entity_id="sensor.outdoor",
+                target_temp_entity_id="climate.vtherm",
+                heating_state_entity_id="climate.vtherm",
+                cycle_split_duration_minutes=400,
+            )
+
 
 class TestTrainingDataPoint:
     """Tests for TrainingDataPoint value object."""
@@ -120,7 +198,9 @@ class TestTrainingDataPoint:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -129,7 +209,9 @@ class TestTrainingDataPoint:
         assert dp.target_temp == 21.0
         assert dp.humidity == 65.0
         assert dp.hour_of_day == 7
-        assert dp.day_of_week == 1
+        # assert dp.day_of_week == 1
+        # assert dp.week_of_month == 2
+        # assert dp.month == 11
         assert dp.heating_duration_minutes == 45.0
 
     def test_training_data_point_is_immutable(self) -> None:
@@ -140,7 +222,9 @@ class TestTrainingDataPoint:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -156,7 +240,9 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=65.0,
                 hour_of_day=7,
-                day_of_week=1,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -170,7 +256,9 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=150.0,  # Invalid: above 100
                 hour_of_day=7,
-                day_of_week=1,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=45.0,
                 timestamp=datetime.now(),
             )
@@ -184,11 +272,12 @@ class TestTrainingDataPoint:
                 target_temp=21.0,
                 humidity=65.0,
                 hour_of_day=7,
-                day_of_week=1,
+                # day_of_week=1,
+                # week_of_month=2,
+                # month=11,
                 heating_duration_minutes=-10.0,  # Invalid: negative
                 timestamp=datetime.now(),
             )
-
 
 class TestTrainingData:
     """Tests for TrainingData value object."""
@@ -201,7 +290,9 @@ class TestTrainingData:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
             heating_duration_minutes=45.0,
             timestamp=datetime.now(),
         )
@@ -226,7 +317,9 @@ class TestPredictionRequest:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
         )
         assert req.outdoor_temp == 5.0
         assert req.temp_delta == 3.0
@@ -239,10 +332,28 @@ class TestPredictionRequest:
             target_temp=21.0,
             humidity=65.0,
             hour_of_day=7,
-            day_of_week=1,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
         )
         with pytest.raises(AttributeError):
             req.outdoor_temp = 10.0  # type: ignore
+
+    def test_prediction_request_with_device_id(self) -> None:
+        """Test creating a prediction request with device_id."""
+        req = PredictionRequest(
+            outdoor_temp=5.0,
+            indoor_temp=18.0,
+            target_temp=21.0,
+            humidity=65.0,
+            hour_of_day=7,
+            # day_of_week=1,
+            # week_of_month=2,
+            # month=11,
+            device_id="ihp_salon",
+        )
+        assert req.device_id == "ihp_salon"
+        assert req.model_id is None
 
 
 class TestPredictionResult:

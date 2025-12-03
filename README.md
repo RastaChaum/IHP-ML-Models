@@ -204,15 +204,26 @@ poetry install
 ### Running Tests
 
 ```bash
+# Run unit tests only
+poetry run pytest tests/unit/ -v
+
+# Run integration tests (tests all API endpoints)
+./scripts/run-integration-tests.sh
+
 # Run all tests
-pytest
+poetry run pytest
 
 # Run with coverage
-pytest --cov=ihp_ml_addon
+poetry run pytest --cov=ihp_ml_addon --cov-report=html
 
 # Run specific test file
-pytest tests/unit/domain/test_value_objects.py
+poetry run pytest tests/unit/domain/test_value_objects.py
+
+# Run specific endpoint test
+poetry run pytest tests/integration/test_api_endpoints.py::TestPredictEndpoint -v
 ```
+
+See [tests/integration/README.md](tests/integration/README.md) for detailed integration testing documentation.
 
 ### Code Quality
 

@@ -23,6 +23,9 @@ class DeviceConfig:
         target_temp_entity_id: Entity ID for target temperature
         heating_state_entity_id: Entity ID for heating state (on/off)
         history_days: Number of days of history to fetch for training
+        cycle_split_duration_minutes: Optional duration in minutes to split long
+            heating cycles into smaller sub-cycles for more training data.
+            If None, cycles are not split. Must be at least 10 minutes if set.
     """
 
     device_id: str
@@ -32,6 +35,7 @@ class DeviceConfig:
     heating_state_entity_id: str
     humidity_entity_id: str | None = None
     history_days: int = 30
+    cycle_split_duration_minutes: int | None = None
 
     def __post_init__(self) -> None:
         """Validate device configuration."""
@@ -49,3 +53,14 @@ class DeviceConfig:
             raise ValueError(f"history_days must be at least 1, got {self.history_days}")
         if self.history_days > 365:
             raise ValueError(f"history_days must be at most 365, got {self.history_days}")
+        if self.cycle_split_duration_minutes is not None:
+            if self.cycle_split_duration_minutes < 10:
+                raise ValueError(
+                    f"cycle_split_duration_minutes must be at least 10, "
+                    f"got {self.cycle_split_duration_minutes}"
+                )
+            if self.cycle_split_duration_minutes > 300:
+                raise ValueError(
+                    f"cycle_split_duration_minutes must be at most 300, "
+                    f"got {self.cycle_split_duration_minutes}"
+                )
