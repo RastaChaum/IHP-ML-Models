@@ -173,6 +173,7 @@ async def train_model() -> Response:
                 # week_of_month=int(week_of_month),
                 # month=int(month),
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
+                minutes_since_last_cycle=float(dp.get("minutes_since_last_cycle", 0.0)),
                 timestamp=timestamp,
             ))
 
@@ -337,6 +338,7 @@ async def predict() -> Response:
         # "day_of_week": int,
         # "week_of_month": int,
         # "month": int,
+        "minutes_since_last_cycle": float (optional - time since last heating cycle),
         "device_id": str (optional - for device-specific model selection),
         "model_id": str (optional - for specific model selection)
     }
@@ -361,6 +363,7 @@ async def predict() -> Response:
             # day_of_week=int(data["day_of_week"]),
             # week_of_month=int(data["week_of_month"]),
             # month=int(data["month"]),
+            minutes_since_last_cycle=float(data["minutes_since_last_cycle"]) if "minutes_since_last_cycle" in data else None,
             device_id=data.get("device_id"),
             model_id=data.get("model_id"),
         )

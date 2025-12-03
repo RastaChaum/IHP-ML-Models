@@ -403,6 +403,70 @@ class TestPredictEndpoint:
         assert data["success"] is True
         assert data["model_id"] == model_id
     
+    def test_predict_with_minutes_since_last_cycle(
+        self, 
+        client: Any, 
+        sample_training_data: Dict[str, Any],
+        sample_prediction_request: Dict[str, Any]
+    ) -> None:
+        """Prediction with minutes_since_last_cycle should be accepted."""
+        # Train a model
+        train_response = client.post(
+            "/api/v1/train",
+            json=sample_training_data,
+            content_type="application/json"
+        )
+        assert train_response.status_code == 200
+        
+        # Predict with minutes_since_last_cycle
+        request = sample_prediction_request.copy()
+        request["minutes_since_last_cycle"] = 180.0  # 3 hours
+        
+        response = client.post(
+            "/api/v1/predict",
+            json=request,
+            content_type="application/json"
+        )
+        
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["success"] is True
+        assert "predicted_duration_minutes" in data
+    
+    def test_predict_without_minutes_since_last_cycle(
+        self, 
+        client: Any, 
+        sample_training_data: Dict[str, Any]
+    ) -> None:
+        """Prediction without minutes_since_last_cycle should still work (optional field)."""
+        # Train a model
+        train_response = client.post(
+            "/api/v1/train",
+            json=sample_training_data,
+            content_type="application/json"
+        )
+        assert train_response.status_code == 200
+        
+        # Predict without minutes_since_last_cycle
+        request = {
+            "outdoor_temp": 5.0,
+            "indoor_temp": 18.0,
+            "target_temp": 21.0,
+            "humidity": 50.0,
+            "hour_of_day": 8,
+            # No minutes_since_last_cycle
+        }
+        
+        response = client.post(
+            "/api/v1/predict",
+            json=request,
+            content_type="application/json"
+        )
+        
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["success"] is True
+    
     def test_predict_with_missing_fields(
         self, 
         client: Any

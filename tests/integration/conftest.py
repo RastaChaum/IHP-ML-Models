@@ -221,6 +221,7 @@ def sample_training_data() -> Dict[str, Any]:
                 "humidity": 50.0,
                 "hour_of_day": 8,
                 "heating_duration_minutes": 30.0 - i * 0.5,
+                "minutes_since_last_cycle": 60.0 + i * 10.0,  # Vary between cycles
                 "timestamp": (base_time - timedelta(days=i)).isoformat(),
             }
             for i in range(50)
@@ -251,4 +252,5 @@ def sample_prediction_request() -> Dict[str, Any]:
         "target_temp": 21.0,
         "humidity": 50.0,
         "hour_of_day": 8,
+        "minutes_since_last_cycle": 120.0,  # 2 hours since last cycle
     }

@@ -96,7 +96,10 @@ pytest tests/integration/ -vv -s
 ### Tests de Succès
 
 - Entraînement avec données valides
+- Entraînement avec `minutes_since_last_cycle` (optionnel)
 - Prédiction après entraînement
+- Prédiction avec `minutes_since_last_cycle` (optionnel)
+- Prédiction sans `minutes_since_last_cycle` (champ optionnel)
 - Gestion de multiples modèles
 - Modèles spécifiques par appareil
 
