@@ -1,0 +1,15 @@
+{
+  "_description": "Room adjacency topology configuration. Maps each zone_id to its adjacent/neighboring zones.",
+  "_example": "For a zone 'living_room', list all physically adjacent rooms that could influence its thermal behavior",
+  "zones": {
+    "living_room": {
+      "adjacent_zones": ["kitchen", "hallway"]
+    },
+    "bedroom": {
+      "adjacent_zones": ["hallway", "bathroom"]
+    },
+    "kitchen": {
+      "adjacent_zones": ["living_room", "dining_room"]
+    }
+  }
+}

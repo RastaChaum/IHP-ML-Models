@@ -6,6 +6,7 @@ Infrastructure adapter that implements IMLModelTrainer using XGBoost.
 import logging
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -14,6 +15,8 @@ from domain.interfaces import IMLModelTrainer, IModelStorage
 from domain.value_objects import ModelInfo, TrainingData
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
+
+from .adjacency_config import AdjacencyConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +28,7 @@ class XGBoostTrainer(IMLModelTrainer):
     heating duration prediction.
     """
 
-    FEATURE_NAMES = (
+    BASE_FEATURE_NAMES = (
         "outdoor_temp",
         "indoor_temp",
         "target_temp",
@@ -42,15 +45,18 @@ class XGBoostTrainer(IMLModelTrainer):
         self,
         storage: IModelStorage,
         hyperparams: dict[str, Any] | None = None,
+        adjacency_config: AdjacencyConfig | None = None,
     ) -> None:
         """Initialize the XGBoost trainer.
 
         Args:
             storage: Model storage implementation
             hyperparams: XGBoost hyperparameters (optional)
+            adjacency_config: Room adjacency configuration (optional)
         """
         self._storage = storage
         self._hyperparams = hyperparams or self._default_hyperparams()
+        self._adjacency_config = adjacency_config or AdjacencyConfig()
 
     @staticmethod
     def _default_hyperparams() -> dict[str, Any]:
@@ -85,8 +91,23 @@ class XGBoostTrainer(IMLModelTrainer):
             model_id = f"xgb_{uuid.uuid4().hex[:8]}"
         _LOGGER.info("Training new XGBoost model: %s (device: %s)", model_id, device_id)
 
+        # Determine feature names based on device_id and adjacency configuration
+        if device_id and self._adjacency_config.has_adjacencies(device_id):
+            feature_names = self._adjacency_config.get_feature_names_for_zone(
+                device_id, self.BASE_FEATURE_NAMES
+            )
+            _LOGGER.info(
+                "Zone %s has %d adjacent zones. Total features: %d",
+                device_id,
+                len(self._adjacency_config.get_adjacent_zones(device_id)),
+                len(feature_names)
+            )
+        else:
+            feature_names = self.BASE_FEATURE_NAMES
+            _LOGGER.info("Using base features only (no adjacency data for zone %s)", device_id)
+
         # Prepare features and labels
-        X, y = self._prepare_data(training_data)
+        X, y = self._prepare_data(training_data, feature_names)
 
         # Split for validation
         X_train, X_val, y_train, y_val = train_test_split(
@@ -113,12 +134,12 @@ class XGBoostTrainer(IMLModelTrainer):
 
         _LOGGER.info("Model %s trained with metrics: %s", model_id, metrics)
 
-        # Create model info
+        # Create model info with the specific feature contract
         model_info = ModelInfo(
             model_id=model_id,
             created_at=datetime.now(),
             training_samples=training_data.size,
-            feature_names=self.FEATURE_NAMES,
+            feature_names=feature_names,
             metrics=metrics,
             device_id=device_id,
         )
@@ -155,11 +176,13 @@ class XGBoostTrainer(IMLModelTrainer):
     def _prepare_data(
         self,
         training_data: TrainingData,
+        feature_names: tuple[str, ...],
     ) -> tuple[np.ndarray, np.ndarray]:
         """Prepare training data as numpy arrays.
 
         Args:
             training_data: Training data value object
+            feature_names: Expected feature names for this model
 
         Returns:
             Tuple of (features array, labels array)
@@ -169,6 +192,7 @@ class XGBoostTrainer(IMLModelTrainer):
 
         for dp in training_data.data_points:
             temp_delta = dp.target_temp - dp.indoor_temp
+            # Start with base features
             feature_row = [
                 dp.outdoor_temp,
                 dp.indoor_temp,
@@ -178,6 +202,29 @@ class XGBoostTrainer(IMLModelTrainer):
                 dp.hour_of_day,
                 dp.minutes_since_last_cycle,
             ]
+            
+            # Add adjacent room features if present in the expected feature list
+            # Feature names beyond base features follow pattern: {zone}_current_temp, etc.
+            if len(feature_names) > len(self.BASE_FEATURE_NAMES):
+                # Extract adjacent room data from data point if available
+                adjacent_data = getattr(dp, 'adjacent_rooms', {})
+                
+                # Process each adjacent room feature expected in feature_names
+                for feature_name in feature_names[len(self.BASE_FEATURE_NAMES):]:
+                    # Parse feature name: {zone}_{feature_type}
+                    parts = feature_name.rsplit('_', 2)  # Split from right to handle zone names with underscores
+                    if len(parts) >= 2:
+                        zone_name = '_'.join(parts[:-2]) if len(parts) > 2 else parts[0]
+                        feature_type = '_'.join(parts[-2:])
+                        
+                        # Get value from adjacent_data or use default (0.0)
+                        zone_data = adjacent_data.get(zone_name, {})
+                        value = zone_data.get(feature_type, 0.0)
+                        feature_row.append(value)
+                    else:
+                        # Fallback: append 0.0 if feature name doesn't match pattern
+                        feature_row.append(0.0)
+            
             features.append(feature_row)
             labels.append(dp.heating_duration_minutes)
 

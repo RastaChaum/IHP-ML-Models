@@ -18,7 +18,7 @@ class XGBoostPredictor(IMLModelPredictor):
     """XGBoost implementation of ML model predictor.
 
     This adapter uses trained XGBoost models to make
-    heating duration predictions.
+    heating duration predictions with feature contract enforcement.
     """
 
     def __init__(self, storage: IModelStorage) -> None:
@@ -28,7 +28,8 @@ class XGBoostPredictor(IMLModelPredictor):
             storage: Model storage implementation
         """
         self._storage = storage
-        self._cached_model: tuple[str, xgb.XGBRegressor, object] | None = None
+        # Cache includes: model_id, model, model_info, feature_names
+        self._cached_model: tuple[str, xgb.XGBRegressor, object, tuple[str, ...]] | None = None
 
     async def predict(self, request: PredictionRequest) -> PredictionResult:
         """Make a prediction using XGBoost.
@@ -50,11 +51,11 @@ class XGBoostPredictor(IMLModelPredictor):
             if model_id is None:
                 raise ValueError("No trained model available")
 
-        # Load model (use cache if available)
-        model, model_info = await self._get_model(model_id)
+        # Load model and feature contract (use cache if available)
+        model, model_info, feature_names = await self._get_model(model_id)
 
-        # Prepare features
-        features = self._prepare_features(request)
+        # Prepare features according to the model's feature contract
+        features = self._prepare_features(request, feature_names)
 
         # Make prediction
         prediction = model.predict(features)
@@ -90,37 +91,55 @@ class XGBoostPredictor(IMLModelPredictor):
         latest_id = await self._storage.get_latest_model_id()
         return latest_id is not None
 
-    async def _get_model(self, model_id: str) -> tuple[xgb.XGBRegressor, object]:
-        """Get model from cache or load from storage.
+    async def _get_model(self, model_id: str) -> tuple[xgb.XGBRegressor, object, tuple[str, ...]]:
+        """Get model and feature contract from cache or load from storage.
 
         Args:
             model_id: Model identifier
 
         Returns:
-            Tuple of (model, model_info)
+            Tuple of (model, model_info, feature_names)
         """
         # Check cache first - avoid loading from storage if cached
         if self._cached_model is not None and self._cached_model[0] == model_id:
-            return self._cached_model[1], self._cached_model[2]
+            return self._cached_model[1], self._cached_model[2], self._cached_model[3]
 
-        # Load full model and info from storage, then cache both
+        # Load full model and info from storage
         model, model_info = await self._storage.load_model(model_id)
-        self._cached_model = (model_id, model, model_info)
-        return model, model_info
+        
+        # Get feature names from model_info (feature contract)
+        feature_names = model_info.feature_names
+        
+        # Cache model, info, and feature contract
+        self._cached_model = (model_id, model, model_info, feature_names)
+        
+        _LOGGER.debug(
+            "Loaded model %s with %d features: %s", 
+            model_id, len(feature_names), feature_names
+        )
+        
+        return model, model_info, feature_names
 
-    def _prepare_features(self, request: PredictionRequest) -> np.ndarray:
-        """Prepare features array for prediction.
+    def _prepare_features(
+        self, 
+        request: PredictionRequest, 
+        feature_names: tuple[str, ...]
+    ) -> np.ndarray:
+        """Prepare features array for prediction according to feature contract.
 
         Args:
             request: Prediction request
+            feature_names: Expected feature names from the model's feature contract
 
         Returns:
-            Numpy array with features
+            Numpy array with features aligned to the feature contract
         """
         temp_delta = request.target_temp - request.indoor_temp
         # Default to 0 if minutes_since_last_cycle not provided
         minutes_since_last_cycle = request.minutes_since_last_cycle or 0.0
-        features = [
+        
+        # Base features (must match BASE_FEATURE_NAMES order in trainer)
+        base_features = [
             request.outdoor_temp,
             request.indoor_temp,
             request.target_temp,
@@ -129,6 +148,41 @@ class XGBoostPredictor(IMLModelPredictor):
             request.hour_of_day,
             minutes_since_last_cycle,
         ]
+        
+        features = base_features.copy()
+        
+        # If model expects additional features, add adjacent room data
+        base_feature_count = 7  # Number of base features
+        if len(feature_names) > base_feature_count:
+            adjacent_data = request.adjacent_rooms or {}
+            
+            # Process each additional feature expected by the model
+            for feature_name in feature_names[base_feature_count:]:
+                # Parse feature name: {zone}_{feature_type}
+                # Handle zone names that may contain underscores
+                parts = feature_name.rsplit('_', 2)
+                
+                if len(parts) >= 2:
+                    zone_name = '_'.join(parts[:-2]) if len(parts) > 2 else parts[0]
+                    feature_type = '_'.join(parts[-2:])
+                    
+                    # Get value from adjacent_data or use default imputation (0.0)
+                    zone_data = adjacent_data.get(zone_name, {})
+                    value = zone_data.get(feature_type, 0.0)
+                    features.append(value)
+                else:
+                    # Fallback: append 0.0 if feature name doesn't match pattern
+                    _LOGGER.warning(
+                        "Unable to parse adjacent room feature name: %s, using default 0.0",
+                        feature_name
+                    )
+                    features.append(0.0)
+            
+            _LOGGER.debug(
+                "Prepared %d features for prediction (%d base + %d adjacent)",
+                len(features), base_feature_count, len(features) - base_feature_count
+            )
+        
         return np.array([features])
 
     def _calculate_confidence(

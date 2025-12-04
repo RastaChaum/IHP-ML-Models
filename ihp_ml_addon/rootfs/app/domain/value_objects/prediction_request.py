@@ -18,6 +18,8 @@ class PredictionRequest:
         hour_of_day: Hour of the day (0-23)
         device_id: Device/thermostat ID for model selection (optional)
         model_id: Optional model identifier (uses latest for device if not specified)
+        adjacent_rooms: Optional dict of adjacent room data, keyed by zone_id.
+            Each zone should have: current_temp, current_humidity, next_target_temp, duration_until_change
     """
 
     outdoor_temp: float
@@ -28,6 +30,7 @@ class PredictionRequest:
     device_id: str | None = None
     model_id: str | None = None
     minutes_since_last_cycle: float | None = None
+    adjacent_rooms: dict[str, dict[str, float]] | None = None
 
     def __post_init__(self) -> None:
         """Validate prediction request values."""

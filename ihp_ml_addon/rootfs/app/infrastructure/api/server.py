@@ -27,6 +27,7 @@ from domain.value_objects import (
     get_week_of_month,
 )
 from infrastructure.adapters import (
+    AdjacencyConfig,
     FileModelStorage,
     HomeAssistantHistoryReader,
     XGBoostPredictor,
@@ -47,7 +48,12 @@ app = Flask(__name__)
 # Initialize services
 model_path = Path(os.getenv("MODEL_PERSISTENCE_PATH", "/data/models"))
 storage = FileModelStorage(model_path)
-trainer = XGBoostTrainer(storage)
+
+# Initialize adjacency configuration for multi-room features
+adjacency_config_path = os.getenv("ADJACENCY_CONFIG_PATH")
+adjacency_config = AdjacencyConfig(adjacency_config_path) if adjacency_config_path else AdjacencyConfig()
+
+trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
 predictor = XGBoostPredictor(storage)
 
 # Initialize Home Assistant history reader if we're running as an addon
@@ -175,6 +181,7 @@ async def train_model() -> Response:
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
                 minutes_since_last_cycle=float(dp.get("minutes_since_last_cycle", 0.0)),
                 timestamp=timestamp,
+                adjacent_rooms=dp.get("adjacent_rooms"),
             ))
 
         training_data = TrainingData.from_sequence(data_points)
@@ -340,7 +347,17 @@ async def predict() -> Response:
         # "month": int,
         "minutes_since_last_cycle": float (optional - time since last heating cycle),
         "device_id": str (optional - for device-specific model selection),
-        "model_id": str (optional - for specific model selection)
+        "model_id": str (optional - for specific model selection),
+        "adjacent_rooms": dict (optional - adjacent room data for multi-room features)
+            Format: {
+                "zone_id": {
+                    "current_temp": float,
+                    "current_humidity": float,
+                    "next_target_temp": float,
+                    "duration_until_change": float (minutes)
+                },
+                ...
+            }
     }
     """
     try:
@@ -366,6 +383,7 @@ async def predict() -> Response:
             minutes_since_last_cycle=float(data["minutes_since_last_cycle"]) if "minutes_since_last_cycle" in data else None,
             device_id=data.get("device_id"),
             model_id=data.get("model_id"),
+            adjacent_rooms=data.get("adjacent_rooms"),
         )
 
         result = await ml_service.predict(prediction_request)

@@ -38,6 +38,8 @@ class TrainingDataPoint:
         minutes_since_last_cycle: Minutes elapsed since the previous cycle ended
         heating_duration_minutes: Label - time needed to reach target (minutes)
         timestamp: When this data point was recorded
+        adjacent_rooms: Optional dict of adjacent room data, keyed by zone_id.
+            Each zone should have: current_temp, current_humidity, next_target_temp, duration_until_change
     """
 
     outdoor_temp: float
@@ -51,6 +53,7 @@ class TrainingDataPoint:
     heating_duration_minutes: float
     timestamp: datetime
     minutes_since_last_cycle: float = 0.0
+    adjacent_rooms: dict[str, dict[str, float]] | None = None
 
     def __post_init__(self) -> None:
         """Validate data point values."""
