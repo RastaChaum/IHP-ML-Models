@@ -7,7 +7,6 @@ to each other for multi-room feature engineering.
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class AdjacencyConfig:
             return
 
         try:
-            with open(self._config_path, "r") as f:
+            with open(self._config_path) as f:
                 config_data = json.load(f)
             
             zones = config_data.get("zones", {})

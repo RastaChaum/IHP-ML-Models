@@ -6,7 +6,6 @@ Infrastructure adapter that implements IMLModelTrainer using XGBoost.
 import logging
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
