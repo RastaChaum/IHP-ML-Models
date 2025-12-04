@@ -157,15 +157,25 @@ class XGBoostPredictor(IMLModelPredictor):
             adjacent_data = request.adjacent_rooms or {}
             
             # Process each additional feature expected by the model
+            # Known feature suffixes (from adjacency_config.py)
+            feature_suffixes = [
+                "current_temp", "current_humidity",
+                "next_target_temp", "duration_until_change"
+            ]
+            
             for feature_name in feature_names[base_feature_count:]:
-                # Parse feature name: {zone}_{feature_type}
-                # Handle zone names that may contain underscores
-                parts = feature_name.rsplit('_', 2)
+                # Parse feature name by finding matching suffix
+                zone_name = None
+                feature_type = None
                 
-                if len(parts) >= 2:
-                    zone_name = '_'.join(parts[:-2]) if len(parts) > 2 else parts[0]
-                    feature_type = '_'.join(parts[-2:])
-                    
+                for suffix in feature_suffixes:
+                    if feature_name.endswith(f"_{suffix}"):
+                        # Extract zone name by removing the suffix
+                        zone_name = feature_name[:-len(suffix)-1]  # -1 for underscore
+                        feature_type = suffix
+                        break
+                
+                if zone_name and feature_type:
                     # Get value from adjacent_data or use default imputation (0.0)
                     zone_data = adjacent_data.get(zone_name, {})
                     value = zone_data.get(feature_type, 0.0)

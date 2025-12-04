@@ -293,3 +293,53 @@ def test_prediction_request_with_adjacent_rooms():
     )
 
     assert request.adjacent_rooms == adjacent_rooms
+
+
+def test_zone_names_with_underscores():
+    """Test that zone names containing underscores are parsed correctly."""
+    from infrastructure.adapters import AdjacencyConfig
+    
+    import json
+    import tempfile
+    from pathlib import Path
+    
+    # Create config with zone names containing underscores
+    config_data = {
+        "zones": {
+            "master_bedroom": {"adjacent_zones": ["master_bathroom", "upstairs_hallway"]},
+        }
+    }
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(config_data, f)
+        config_path = f.name
+    
+    try:
+        config = AdjacencyConfig(config_path)
+        base_features = ("outdoor_temp", "indoor_temp", "target_temp")
+        
+        # Generate feature names
+        feature_names = config.get_feature_names_for_zone("master_bedroom", base_features)
+        
+        # Verify feature names are correctly constructed
+        assert "master_bathroom_current_temp" in feature_names
+        assert "master_bathroom_current_humidity" in feature_names
+        assert "upstairs_hallway_next_target_temp" in feature_names
+        assert "upstairs_hallway_duration_until_change" in feature_names
+        
+        # Test parsing logic in trainer (indirectly)
+        # The feature names should be parseable back to zone names
+        for fname in feature_names[3:]:  # Skip base features
+            # Check that we can identify a valid suffix
+            suffixes = ["current_temp", "current_humidity", "next_target_temp", "duration_until_change"]
+            found_suffix = False
+            for suffix in suffixes:
+                if fname.endswith(f"_{suffix}"):
+                    zone_name = fname[:-len(suffix)-1]
+                    assert zone_name in ["master_bathroom", "upstairs_hallway"]
+                    found_suffix = True
+                    break
+            assert found_suffix, f"Could not parse feature name: {fname}"
+            
+    finally:
+        Path(config_path).unlink()
