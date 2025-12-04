@@ -325,7 +325,7 @@ def test_zone_names_with_underscores():
         
         # Test parsing logic in trainer (indirectly)
         # The feature names should be parseable back to zone names
-        for fname in feature_names[3:]:  # Skip base features
+        for fname in feature_names[len(base_features):]:
             # Check that we can identify a valid suffix
             suffixes = ["current_temp", "current_humidity", "next_target_temp", "duration_until_change"]
             found_suffix = False

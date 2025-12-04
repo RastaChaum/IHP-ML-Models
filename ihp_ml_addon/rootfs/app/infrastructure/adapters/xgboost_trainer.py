@@ -191,7 +191,6 @@ class XGBoostTrainer(IMLModelTrainer):
 
         for dp in training_data.data_points:
             temp_delta = dp.target_temp - dp.indoor_temp
-            # Start with base features
             feature_row = [
                 dp.outdoor_temp,
                 dp.indoor_temp,
@@ -202,11 +201,8 @@ class XGBoostTrainer(IMLModelTrainer):
                 dp.minutes_since_last_cycle,
             ]
             
-            # Add adjacent room features if present in the expected feature list
-            # Feature names beyond base features follow pattern: {zone}_current_temp, etc.
             if len(feature_names) > len(self.BASE_FEATURE_NAMES):
-                # Extract adjacent room data from data point if available
-                adjacent_data = getattr(dp, 'adjacent_rooms', {})
+                adjacent_data = dp.adjacent_rooms or {}
                 
                 # Process each adjacent room feature expected in feature_names
                 # Known feature suffixes (from adjacency_config.py)
