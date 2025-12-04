@@ -22,9 +22,10 @@ class AdjacencyConfig:
         """
         if config_path is None:
             # Default to config/adjacencies_room.json relative to project root
-            # Try to find it from the app directory
-            app_dir = Path(__file__).parent.parent.parent
-            config_path = app_dir.parent.parent.parent / "config" / "adjacencies_room.json"
+            # This file is at: ihp_ml_addon/rootfs/app/infrastructure/adapters/adjacency_config.py
+            # Project root is 6 levels up
+            project_root = Path(__file__).resolve().parents[5]
+            config_path = project_root / "config" / "adjacencies_room.json"
         
         self._config_path = Path(config_path)
         self._adjacencies: dict[str, list[str]] = {}

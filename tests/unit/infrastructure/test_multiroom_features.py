@@ -299,10 +299,6 @@ def test_zone_names_with_underscores():
     """Test that zone names containing underscores are parsed correctly."""
     from infrastructure.adapters import AdjacencyConfig
     
-    import json
-    import tempfile
-    from pathlib import Path
-    
     # Create config with zone names containing underscores
     config_data = {
         "zones": {
