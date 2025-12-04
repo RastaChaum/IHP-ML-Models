@@ -242,13 +242,10 @@ Models trained **without** adjacent room data (base features only) continue to w
 ## Troubleshooting
 
 ### Model expects adjacent room features but none provided
-**Solution**: Either provide adjacent room data or train a new model without adjacency config.
-
-### Zone not found in adjacency config
-**Solution**: Add the zone to `config/adjacencies_room.json` or train without a specific `device_id`.
+**Solution**: Provide adjacent room data in the prediction request. The API will return HTTP 206 with a warning, and predictions will use imputed values (0.0).
 
 ### Feature count mismatch
-**Solution**: Ensure the adjacency configuration hasn't changed since model training. Retrain if needed.
+**Solution**: Ensure the same adjacent rooms provided during training are also provided during prediction. The model will use the feature contract saved during training.
 
 ## Performance Impact
 

@@ -130,7 +130,18 @@ async def train_model() -> Response:
                 # "week_of_month": int,
                 # "month": int,
                 "heating_duration_minutes": float,
-                "timestamp": str (ISO format)
+                "minutes_since_last_cycle": float (optional),
+                "timestamp": str (ISO format),
+                "adjacent_rooms": dict (optional - multi-room features)
+                    Format: {
+                        "zone_id": {
+                            "current_temp": float,
+                            "current_humidity": float,
+                            "next_target_temp": float,
+                            "duration_until_change": float (minutes)
+                        },
+                        ...
+                    }
             },
             ...
         ]
