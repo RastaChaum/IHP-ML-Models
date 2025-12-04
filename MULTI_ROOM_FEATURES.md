@@ -4,32 +4,19 @@ This document explains how to use the multi-room feature integration capability 
 
 ## Overview
 
-The multi-room feature integration enhances prediction accuracy by incorporating thermal context from adjacent zones. Each model maintains a **feature contract** that defines exactly which features it expects, ensuring consistency between training and inference.
+The multi-room feature integration enhances prediction accuracy by incorporating thermal context from adjacent zones. Each model **automatically discovers** which adjacent room features are present in the training data and maintains a **feature contract** that defines exactly which features it expects, ensuring consistency between training and inference.
 
 ## Key Components
 
-### 1. Adjacency Configuration
+### 1. Automatic Feature Discovery
 
-The room topology is defined in `config/adjacencies_room.json`:
+**No configuration file required!** The trainer automatically discovers adjacent room features from the training data itself. Simply include `adjacent_rooms` data in your training requests, and the model will:
 
-```json
-{
-  "_description": "Room adjacency topology configuration",
-  "zones": {
-    "living_room": {
-      "adjacent_zones": ["kitchen", "hallway"]
-    },
-    "bedroom": {
-      "adjacent_zones": ["hallway", "bathroom"]
-    }
-  }
-}
-```
+1. Detect which adjacent zones are present in the data
+2. Generate a feature list including all discovered adjacent room features
+3. Store the feature contract with the model
 
-**Configuration Guidelines:**
-- Each zone should list only its **physically adjacent** neighbors
-- Zone IDs must match the `device_id` used during training
-- Keep the topology accurate to your home layout
+This approach is more flexible and adapts to your actual data, managed by the calling integration (Intelligent-Heating-Pilot).
 
 ### 2. Adjacent Room Features
 
@@ -201,31 +188,48 @@ Example feature contract:
 }
 ```
 
-## Missing Value Imputation
+## Missing Value Handling & Warnings
 
-If adjacent room data is **missing or incomplete** during prediction:
+When adjacent room data is **missing or incomplete** during prediction:
+
+### Behavior
 - Missing features are automatically imputed with **0.0**
-- The model will still make predictions (with potentially reduced accuracy)
-- This ensures robustness when sensor data is temporarily unavailable
+- The model still makes predictions (with potentially reduced accuracy)
+- A **WARNING** is logged indicating which features are missing
+- API returns **HTTP 206 (Partial Content)** instead of 200
+- Response includes `warning` field and `missing_features` list
 
-**Example**: If the API receives no `adjacent_rooms` data, all adjacent room features default to 0.0.
+### Example Response with Missing Features
+
+```json
+{
+  "success": true,
+  "predicted_duration_minutes": 42.5,
+  "confidence": 0.85,
+  "model_id": "xgb_living_room_a1b2c3d4",
+  "timestamp": "2024-01-15T06:15:00",
+  "reasoning": "Predicted 42.5 minutes to heat...",
+  "warning": "Model expects adjacent room features but some are missing",
+  "missing_features": [
+    "kitchen_current_temp",
+    "kitchen_current_humidity",
+    "kitchen_next_target_temp",
+    "kitchen_duration_until_change"
+  ]
+}
+```
+
+**HTTP Status**: `206 Partial Content` (instead of `200 OK`)
+
+This allows the calling integration to detect when predictions are made without full context and handle it appropriately.
 
 ## Backward Compatibility
 
-Models trained **without** adjacent room data (base features only) continue to work:
+Models trained **without** adjacent room data (base features only) continue to work normally:
 - They require only the 7 base features
 - No adjacent room data is needed for predictions
 - Feature contracts ensure correct handling
-
-## Environment Variables
-
-Configure the adjacency configuration path (optional):
-
-```bash
-export ADJACENCY_CONFIG_PATH=/path/to/adjacencies_room.json
-```
-
-If not set, defaults to `config/adjacencies_room.json` in the project root.
+- These models return normal **HTTP 200** responses
 
 ## Best Practices
 

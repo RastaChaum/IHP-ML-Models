@@ -49,7 +49,7 @@ ihp_ml_addon/
 
 The add-on exposes an HTTP API on port 5000.
 
-> **🆕 Multi-Room Features**: The add-on now supports incorporating environmental data from adjacent rooms to improve predictions. See [MULTI_ROOM_FEATURES.md](./MULTI_ROOM_FEATURES.md) for configuration and usage details.
+> **🆕 Multi-Room Features**: The add-on now supports incorporating environmental data from adjacent rooms to improve predictions. Features are automatically discovered from training data—no configuration file needed! See [MULTI_ROOM_FEATURES.md](./MULTI_ROOM_FEATURES.md) for usage details.
 
 #### Train with Fake Data (for testing)
 

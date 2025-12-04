@@ -63,24 +63,23 @@ def sample_training_data_with_adjacent():
 
 
 @pytest.mark.asyncio
-async def test_trainer_with_adjacency_config(
-    tmp_path, sample_adjacency_config, sample_training_data_with_adjacent
+async def test_trainer_discovers_features_from_data(
+    tmp_path, sample_training_data_with_adjacent
 ):
-    """Test that trainer uses adjacency config to create dynamic feature lists."""
+    """Test that trainer discovers features from training data."""
     from infrastructure.adapters import (
-        AdjacencyConfig,
         FileModelStorage,
         XGBoostTrainer,
     )
 
     storage = FileModelStorage(tmp_path)
-    adjacency_config = AdjacencyConfig(sample_adjacency_config)
-    trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
+    trainer = XGBoostTrainer(storage)
 
-    # Train model for living_room (has adjacent kitchen)
+    # Train model with data containing adjacent room features
     model_info = await trainer.train(sample_training_data_with_adjacent, device_id="living_room")
 
     # Check that feature names include base features + adjacent room features
+    # The sample data has kitchen as adjacent room with 4 features
     assert len(model_info.feature_names) == 7 + 4  # 7 base + 4 for kitchen
     assert "outdoor_temp" in model_info.feature_names
     assert "kitchen_current_temp" in model_info.feature_names
@@ -94,15 +93,33 @@ async def test_trainer_with_adjacency_config(
 
 
 @pytest.mark.asyncio
-async def test_trainer_without_adjacency(tmp_path, sample_training_data_with_adjacent):
-    """Test that trainer works without adjacency config (base features only)."""
+async def test_trainer_without_adjacent_data(tmp_path):
+    """Test that trainer works with data that has no adjacent room information."""
     from infrastructure.adapters import FileModelStorage, XGBoostTrainer
+
+    # Create training data WITHOUT adjacent rooms
+    data_points = []
+    for i in range(20):
+        data_points.append(
+            TrainingDataPoint(
+                outdoor_temp=5.0 + i * 0.5,
+                indoor_temp=18.0 + i * 0.2,
+                target_temp=21.0,
+                humidity=60.0 + i * 0.3,
+                hour_of_day=i % 24,
+                heating_duration_minutes=30.0 + i,
+                timestamp=datetime.now(),
+                minutes_since_last_cycle=60.0,
+                # No adjacent_rooms field
+            )
+        )
+    training_data = TrainingData.from_sequence(data_points)
 
     storage = FileModelStorage(tmp_path)
     trainer = XGBoostTrainer(storage)
 
-    # Train model without device_id
-    model_info = await trainer.train(sample_training_data_with_adjacent)
+    # Train model with data that has no adjacent rooms
+    model_info = await trainer.train(training_data)
 
     # Should only have base features
     assert len(model_info.feature_names) == 7  # Base features only
@@ -112,19 +129,17 @@ async def test_trainer_without_adjacency(tmp_path, sample_training_data_with_adj
 
 @pytest.mark.asyncio
 async def test_predictor_with_adjacent_rooms(
-    tmp_path, sample_adjacency_config, sample_training_data_with_adjacent
+    tmp_path, sample_training_data_with_adjacent
 ):
     """Test prediction with adjacent room data."""
     from infrastructure.adapters import (
-        AdjacencyConfig,
         FileModelStorage,
         XGBoostPredictor,
         XGBoostTrainer,
     )
 
     storage = FileModelStorage(tmp_path)
-    adjacency_config = AdjacencyConfig(sample_adjacency_config)
-    trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
+    trainer = XGBoostTrainer(storage)
     predictor = XGBoostPredictor(storage)
 
     # Train a model with adjacent room features
@@ -153,27 +168,26 @@ async def test_predictor_with_adjacent_rooms(
 
     result = await predictor.predict(request)
 
-    # Should get a valid prediction
+    # Should get a valid prediction with no feature mismatch
     assert result.predicted_duration_minutes >= 0
     assert result.confidence > 0
     assert result.model_id == model_info.model_id
+    assert result.feature_mismatch is False
 
 
 @pytest.mark.asyncio
 async def test_predictor_missing_adjacent_data_uses_imputation(
-    tmp_path, sample_adjacency_config, sample_training_data_with_adjacent
+    tmp_path, sample_training_data_with_adjacent
 ):
-    """Test that predictor imputes missing adjacent room data with 0.0."""
+    """Test that predictor imputes missing adjacent room data with 0.0 and reports feature mismatch."""
     from infrastructure.adapters import (
-        AdjacencyConfig,
         FileModelStorage,
         XGBoostPredictor,
         XGBoostTrainer,
     )
 
     storage = FileModelStorage(tmp_path)
-    adjacency_config = AdjacencyConfig(sample_adjacency_config)
-    trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
+    trainer = XGBoostTrainer(storage)
     predictor = XGBoostPredictor(storage)
 
     # Train a model with adjacent room features
@@ -197,23 +211,25 @@ async def test_predictor_missing_adjacent_data_uses_imputation(
     assert result.predicted_duration_minutes >= 0
     assert result.confidence > 0
     assert result.model_id == model_info.model_id
+    # Should report feature mismatch since adjacent room data was missing
+    assert result.feature_mismatch is True
+    assert result.missing_features is not None
+    assert len(result.missing_features) == 4  # 4 kitchen features missing
 
 
 @pytest.mark.asyncio
 async def test_predictor_partial_adjacent_data_uses_imputation(
-    tmp_path, sample_adjacency_config, sample_training_data_with_adjacent
+    tmp_path, sample_training_data_with_adjacent
 ):
-    """Test that predictor imputes missing fields in adjacent room data."""
+    """Test that predictor imputes missing fields in adjacent room data and reports mismatch."""
     from infrastructure.adapters import (
-        AdjacencyConfig,
         FileModelStorage,
         XGBoostPredictor,
         XGBoostTrainer,
     )
 
     storage = FileModelStorage(tmp_path)
-    adjacency_config = AdjacencyConfig(sample_adjacency_config)
-    trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
+    trainer = XGBoostTrainer(storage)
     predictor = XGBoostPredictor(storage)
 
     # Train a model with adjacent room features
@@ -244,6 +260,10 @@ async def test_predictor_partial_adjacent_data_uses_imputation(
     assert result.predicted_duration_minutes >= 0
     assert result.confidence > 0
     assert result.model_id == model_info.model_id
+    # Should report feature mismatch for the 3 missing fields
+    assert result.feature_mismatch is True
+    assert result.missing_features is not None
+    assert len(result.missing_features) == 3  # 3 kitchen features missing
 
 
 def test_training_data_point_with_adjacent_rooms():

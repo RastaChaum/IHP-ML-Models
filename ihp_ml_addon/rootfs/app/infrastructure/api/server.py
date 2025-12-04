@@ -27,7 +27,6 @@ from domain.value_objects import (
     get_week_of_month,
 )
 from infrastructure.adapters import (
-    AdjacencyConfig,
     FileModelStorage,
     HomeAssistantHistoryReader,
     XGBoostPredictor,
@@ -49,11 +48,7 @@ app = Flask(__name__)
 model_path = Path(os.getenv("MODEL_PERSISTENCE_PATH", "/data/models"))
 storage = FileModelStorage(model_path)
 
-# Initialize adjacency configuration for multi-room features
-adjacency_config_path = os.getenv("ADJACENCY_CONFIG_PATH")
-adjacency_config = AdjacencyConfig(adjacency_config_path) if adjacency_config_path else AdjacencyConfig()
-
-trainer = XGBoostTrainer(storage, adjacency_config=adjacency_config)
+trainer = XGBoostTrainer(storage)
 predictor = XGBoostPredictor(storage)
 
 # Initialize Home Assistant history reader if we're running as an addon
@@ -388,14 +383,22 @@ async def predict() -> Response:
 
         result = await ml_service.predict(prediction_request)
 
-        return jsonify({
+        response_data = {
             "success": True,
             "predicted_duration_minutes": result.predicted_duration_minutes,
             "confidence": result.confidence,
             "model_id": result.model_id,
             "timestamp": result.timestamp.isoformat(),
             "reasoning": result.reasoning,
-        })
+        }
+
+        # If there's a feature mismatch, include warning information and return 206
+        if result.feature_mismatch:
+            response_data["warning"] = "Model expects adjacent room features but some are missing"
+            response_data["missing_features"] = result.missing_features
+            return jsonify(response_data), 206  # 206 Partial Content
+
+        return jsonify(response_data)
 
     except KeyError as e:
         return jsonify({"error": f"Missing required field: {e}"}), 400

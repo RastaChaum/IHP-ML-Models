@@ -54,6 +54,18 @@ class XGBoostPredictor(IMLModelPredictor):
         # Load model and feature contract (use cache if available)
         model, model_info, feature_names = await self._get_model(model_id)
 
+        # Check for missing adjacent room features
+        missing_features = self._check_missing_features(request, feature_names)
+        feature_mismatch = len(missing_features) > 0
+
+        if feature_mismatch:
+            _LOGGER.warning(
+                "Model %s expects adjacent room features but they are missing or incomplete. "
+                "Missing features: %s. Prediction will use default values (0.0) for missing data.",
+                model_id,
+                ", ".join(missing_features)
+            )
+
         # Prepare features according to the model's feature contract
         features = self._prepare_features(request, feature_names)
 
@@ -80,6 +92,8 @@ class XGBoostPredictor(IMLModelPredictor):
             model_id=model_id,
             timestamp=datetime.now(),
             reasoning=reasoning,
+            feature_mismatch=feature_mismatch,
+            missing_features=missing_features if feature_mismatch else None,
         )
 
     async def has_trained_model(self) -> bool:
@@ -119,6 +133,54 @@ class XGBoostPredictor(IMLModelPredictor):
         )
         
         return model, model_info, feature_names
+
+    def _check_missing_features(
+        self,
+        request: PredictionRequest,
+        feature_names: tuple[str, ...],
+    ) -> list[str]:
+        """Check if expected adjacent room features are missing from the request.
+
+        Args:
+            request: Prediction request
+            feature_names: Expected feature names from the model's feature contract
+
+        Returns:
+            List of missing feature names (empty if all features are present)
+        """
+        base_feature_count = 7  # Number of base features
+        
+        # If model doesn't expect adjacent room features, return empty list
+        if len(feature_names) <= base_feature_count:
+            return []
+        
+        missing_features = []
+        adjacent_data = request.adjacent_rooms or {}
+        
+        # Known feature suffixes
+        feature_suffixes = [
+            "current_temp", "current_humidity",
+            "next_target_temp", "duration_until_change"
+        ]
+        
+        for feature_name in feature_names[base_feature_count:]:
+            # Parse feature name to extract zone and feature type
+            zone_name = None
+            feature_type = None
+            
+            for suffix in feature_suffixes:
+                if feature_name.endswith(f"_{suffix}"):
+                    zone_name = feature_name[:-len(suffix)-1]
+                    feature_type = suffix
+                    break
+            
+            if zone_name and feature_type:
+                # Check if this feature is present in the request
+                zone_data = adjacent_data.get(zone_name, {})
+                if not zone_data or feature_type not in zone_data:
+                    missing_features.append(feature_name)
+        
+        return missing_features
 
     def _prepare_features(
         self, 

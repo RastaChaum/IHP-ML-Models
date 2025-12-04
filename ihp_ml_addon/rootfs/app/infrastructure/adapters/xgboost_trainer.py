@@ -15,8 +15,6 @@ from domain.value_objects import ModelInfo, TrainingData
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
-from .adjacency_config import AdjacencyConfig
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -44,18 +42,15 @@ class XGBoostTrainer(IMLModelTrainer):
         self,
         storage: IModelStorage,
         hyperparams: dict[str, Any] | None = None,
-        adjacency_config: AdjacencyConfig | None = None,
     ) -> None:
         """Initialize the XGBoost trainer.
 
         Args:
             storage: Model storage implementation
             hyperparams: XGBoost hyperparameters (optional)
-            adjacency_config: Room adjacency configuration (optional)
         """
         self._storage = storage
         self._hyperparams = hyperparams or self._default_hyperparams()
-        self._adjacency_config = adjacency_config or AdjacencyConfig()
 
     @staticmethod
     def _default_hyperparams() -> dict[str, Any]:
@@ -90,20 +85,14 @@ class XGBoostTrainer(IMLModelTrainer):
             model_id = f"xgb_{uuid.uuid4().hex[:8]}"
         _LOGGER.info("Training new XGBoost model: %s (device: %s)", model_id, device_id)
 
-        # Determine feature names based on device_id and adjacency configuration
-        if device_id and self._adjacency_config.has_adjacencies(device_id):
-            feature_names = self._adjacency_config.get_feature_names_for_zone(
-                device_id, self.BASE_FEATURE_NAMES
-            )
-            _LOGGER.info(
-                "Zone %s has %d adjacent zones. Total features: %d",
-                device_id,
-                len(self._adjacency_config.get_adjacent_zones(device_id)),
-                len(feature_names)
-            )
-        else:
-            feature_names = self.BASE_FEATURE_NAMES
-            _LOGGER.info("Using base features only (no adjacency data for zone %s)", device_id)
+        # Discover feature names from the training data itself
+        feature_names = self._discover_feature_names(training_data)
+        _LOGGER.info(
+            "Discovered %d features from training data (%d base + %d adjacent room features)",
+            len(feature_names),
+            len(self.BASE_FEATURE_NAMES),
+            len(feature_names) - len(self.BASE_FEATURE_NAMES)
+        )
 
         # Prepare features and labels
         X, y = self._prepare_data(training_data, feature_names)
@@ -171,6 +160,45 @@ class XGBoostTrainer(IMLModelTrainer):
 
         # Train new model with same ID prefix
         return await self.train(training_data)
+
+    def _discover_feature_names(self, training_data: TrainingData) -> tuple[str, ...]:
+        """Discover feature names from the training data.
+
+        Inspects the training data to determine which adjacent room features
+        are present and constructs the complete feature list.
+
+        Args:
+            training_data: Training data value object
+
+        Returns:
+            Tuple of feature names (base features + discovered adjacent room features)
+        """
+        # Start with base features
+        feature_names = list(self.BASE_FEATURE_NAMES)
+        
+        # Collect all adjacent room features from the data
+        adjacent_zones_features = set()
+        
+        for dp in training_data.data_points:
+            if dp.adjacent_rooms:
+                for zone_name in dp.adjacent_rooms:
+                    # For each zone with data, add the 4 standard features
+                    for feature_type in ["current_temp", "current_humidity", 
+                                        "next_target_temp", "duration_until_change"]:
+                        feature_name = f"{zone_name}_{feature_type}"
+                        adjacent_zones_features.add(feature_name)
+        
+        # Sort adjacent features for consistency
+        sorted_adjacent_features = sorted(adjacent_zones_features)
+        feature_names.extend(sorted_adjacent_features)
+        
+        if sorted_adjacent_features:
+            _LOGGER.info(
+                "Discovered adjacent room features: %s",
+                ", ".join(sorted_adjacent_features)
+            )
+        
+        return tuple(feature_names)
 
     def _prepare_data(
         self,
