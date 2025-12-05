@@ -20,6 +20,8 @@ class RewardConfig:
         energy_penalty_factor: Penalty per kWh of energy consumed.
         target_achieved_reward: Large reward when target is reached on time.
         target_missed_penalty: Large penalty when target is missed.
+        early_achievement_penalty_factor: Penalty per minute when target reached early.
+        late_achievement_penalty_factor: Penalty per minute when target reached late.
         target_tolerance_celsius: Temperature tolerance for considering target achieved.
         overshoot_threshold_celsius: Temperature above target to consider overshoot.
     """
@@ -35,6 +37,8 @@ class RewardConfig:
     # Terminal rewards
     target_achieved_reward: float = 10.0
     target_missed_penalty: float = 10.0
+    early_achievement_penalty_factor: float = 0.5
+    late_achievement_penalty_factor: float = 1.0
 
     # Thresholds
     target_tolerance_celsius: float = 0.5
@@ -68,6 +72,16 @@ class RewardConfig:
         if self.target_missed_penalty < 0:
             raise ValueError(
                 f"target_missed_penalty must be non-negative, got {self.target_missed_penalty}"
+            )
+        if self.early_achievement_penalty_factor < 0:
+            raise ValueError(
+                f"early_achievement_penalty_factor must be non-negative, "
+                f"got {self.early_achievement_penalty_factor}"
+            )
+        if self.late_achievement_penalty_factor < 0:
+            raise ValueError(
+                f"late_achievement_penalty_factor must be non-negative, "
+                f"got {self.late_achievement_penalty_factor}"
             )
         if self.target_tolerance_celsius <= 0:
             raise ValueError(

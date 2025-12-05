@@ -216,10 +216,10 @@ class TestRLObservation:
         assert obs.time_until_target_minutes == 30
         assert obs.is_heating_on is True
 
-    def test_negative_time_until_target_raises_error(self):
-        """Test that negative time_until_target_minutes raises ValueError."""
-        with pytest.raises(ValueError, match="time_until_target_minutes must be non-negative"):
-            self.create_valid_observation(time_until_target_minutes=-5)
+    def test_negative_time_until_target_allowed(self):
+        """Test that negative time_until_target_minutes is allowed (means early)."""
+        obs = self.create_valid_observation(time_until_target_minutes=-5)
+        assert obs.time_until_target_minutes == -5
 
     def test_negative_energy_consumption_raises_error(self):
         """Test that negative energy consumption raises ValueError."""
@@ -255,15 +255,15 @@ class TestRLAction:
     """Tests for RLAction value object."""
 
     def test_valid_turn_on_action(self):
-        """Test creating a valid turn on action."""
+        """Test creating a valid turn on action with target temperature."""
         action = RLAction(
             action_type=HeatingActionType.TURN_ON,
-            value=None,
+            value=20.0,
             decision_timestamp=datetime.now(),
             confidence_score=0.85,
         )
         assert action.action_type == HeatingActionType.TURN_ON
-        assert action.value is None
+        assert action.value == 20.0
         assert action.confidence_score == 0.85
 
     def test_valid_set_temperature_action(self):
@@ -280,26 +280,17 @@ class TestRLAction:
         """Test that RLAction is immutable."""
         action = RLAction(
             action_type=HeatingActionType.TURN_OFF,
-            value=None,
+            value=18.0,
             decision_timestamp=datetime.now(),
         )
         with pytest.raises(FrozenInstanceError):
             action.value = 25.0
 
-    def test_set_temperature_without_value_raises_error(self):
-        """Test that SET_TARGET_TEMPERATURE without value raises ValueError."""
-        with pytest.raises(ValueError, match="value must be provided for SET_TARGET_TEMPERATURE"):
-            RLAction(
-                action_type=HeatingActionType.SET_TARGET_TEMPERATURE,
-                value=None,
-                decision_timestamp=datetime.now(),
-            )
-
-    def test_set_temperature_value_out_of_range_raises_error(self):
+    def test_temperature_value_out_of_range_raises_error(self):
         """Test that temperature value out of range raises ValueError."""
         with pytest.raises(ValueError, match="target temperature value must be between 0 and 50"):
             RLAction(
-                action_type=HeatingActionType.SET_TARGET_TEMPERATURE,
+                action_type=HeatingActionType.TURN_ON,
                 value=-5.0,
                 decision_timestamp=datetime.now(),
             )
@@ -316,7 +307,7 @@ class TestRLAction:
         with pytest.raises(ValueError, match="confidence_score must be between 0.0 and 1.0"):
             RLAction(
                 action_type=HeatingActionType.TURN_ON,
-                value=None,
+                value=20.0,
                 decision_timestamp=datetime.now(),
                 confidence_score=-0.1,
             )
@@ -324,7 +315,7 @@ class TestRLAction:
         with pytest.raises(ValueError, match="confidence_score must be between 0.0 and 1.0"):
             RLAction(
                 action_type=HeatingActionType.TURN_ON,
-                value=None,
+                value=20.0,
                 decision_timestamp=datetime.now(),
                 confidence_score=1.5,
             )
@@ -370,7 +361,7 @@ class TestRLExperience:
         state = self.create_valid_observation()
         action = RLAction(
             action_type=HeatingActionType.TURN_ON,
-            value=None,
+            value=20.0,
             decision_timestamp=datetime.now(),
         )
         next_state = self.create_valid_observation()
@@ -394,7 +385,7 @@ class TestRLExperience:
         state = self.create_valid_observation()
         action = RLAction(
             action_type=HeatingActionType.TURN_ON,
-            value=None,
+            value=20.0,
             decision_timestamp=datetime.now(),
         )
         next_state = self.create_valid_observation()
@@ -415,7 +406,7 @@ class TestRLExperience:
         state = self.create_valid_observation(device_id="device1")
         action = RLAction(
             action_type=HeatingActionType.TURN_ON,
-            value=None,
+            value=20.0,
             decision_timestamp=datetime.now(),
         )
         next_state = self.create_valid_observation(device_id="device2")

@@ -31,6 +31,8 @@ class TestRewardConfig:
         assert config.energy_penalty_factor == 0.1
         assert config.target_achieved_reward == 10.0
         assert config.target_missed_penalty == 10.0
+        assert config.early_achievement_penalty_factor == 0.5
+        assert config.late_achievement_penalty_factor == 1.0
         assert config.target_tolerance_celsius == 0.5
         assert config.overshoot_threshold_celsius == 1.0
 
@@ -111,6 +113,16 @@ class TestRewardConfig:
         with pytest.raises(ValueError, match="overshoot_threshold_celsius must be positive"):
             RewardConfig(overshoot_threshold_celsius=-0.5)
 
+    def test_negative_early_achievement_penalty_raises_error(self):
+        """Test that negative early_achievement_penalty_factor raises ValueError."""
+        with pytest.raises(ValueError, match="early_achievement_penalty_factor must be non-negative"):
+            RewardConfig(early_achievement_penalty_factor=-1.0)
+
+    def test_negative_late_achievement_penalty_raises_error(self):
+        """Test that negative late_achievement_penalty_factor raises ValueError."""
+        with pytest.raises(ValueError, match="late_achievement_penalty_factor must be non-negative"):
+            RewardConfig(late_achievement_penalty_factor=-1.0)
+
 
 class TestHeatingRewardCalculator:
     """Tests for HeatingRewardCalculator service."""
@@ -121,6 +133,7 @@ class TestHeatingRewardCalculator:
         target_temp: float,
         device_id: str = "test_device",
         energy_consumption: float | None = None,
+        time_until_target_minutes: int = 30,
     ) -> RLObservation:
         """Helper to create a test observation."""
         return RLObservation(
@@ -133,7 +146,7 @@ class TestHeatingRewardCalculator:
             timestamp=datetime.now(),
             target_temp=target_temp,
             target_temp_entity=EntityState("sensor.target", 0.0),
-            time_until_target_minutes=30,
+            time_until_target_minutes=time_until_target_minutes,
             current_target_achieved_percentage=None,
             is_heating_on=True,
             heating_output_percent=None,
@@ -156,12 +169,14 @@ class TestHeatingRewardCalculator:
         )
 
     def create_action(
-        self, action_type: HeatingActionType = HeatingActionType.TURN_ON
+        self,
+        action_type: HeatingActionType = HeatingActionType.TURN_ON,
+        value: float = 20.0,
     ) -> RLAction:
         """Helper to create a test action."""
         return RLAction(
             action_type=action_type,
-            value=None,
+            value=value,
             decision_timestamp=datetime.now(),
         )
 
@@ -345,21 +360,23 @@ class TestHeatingRewardCalculator:
         # Total = 1.0 - 0.03 = 0.97
         assert reward == pytest.approx(0.97, abs=0.01)
 
-    def test_terminal_reward_when_target_achieved(self):
-        """Test large positive terminal reward when target is achieved."""
+    def test_terminal_reward_perfect_timing(self):
+        """Test maximum reward when target achieved at perfect time."""
         calculator = HeatingRewardCalculator(
             RewardConfig(
                 target_achieved_reward=10.0,
                 target_missed_penalty=5.0,
                 energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
             )
         )
 
-        final_state = self.create_observation(indoor_temp=20.0, target_temp=20.0)
+        # Temperature within tolerance and time_until_target == 0
+        final_state = self.create_observation(
+            indoor_temp=20.0, target_temp=20.0, time_until_target_minutes=0
+        )
         reward = calculator.calculate_terminal_reward(
             final_state=final_state,
-            target_achieved=True,
-            episode_duration_minutes=30.0,
             total_energy_consumed_kwh=1.0,
         )
 
@@ -368,26 +385,107 @@ class TestHeatingRewardCalculator:
         # Total = 10.0 - 0.1 = 9.9
         assert reward == pytest.approx(9.9, abs=0.01)
 
-    def test_terminal_reward_when_target_missed(self):
-        """Test large negative terminal reward when target is missed."""
+    def test_terminal_reward_achieved_early(self):
+        """Test reward when target achieved early (lesser penalty)."""
+        calculator = HeatingRewardCalculator(
+            RewardConfig(
+                target_achieved_reward=10.0,
+                early_achievement_penalty_factor=0.1,
+                energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
+            )
+        )
+
+        # Temperature achieved but 5 minutes early (time_until_target = -5)
+        final_state = self.create_observation(
+            indoor_temp=20.0, target_temp=20.0, time_until_target_minutes=-5
+        )
+        reward = calculator.calculate_terminal_reward(
+            final_state=final_state,
+            total_energy_consumed_kwh=1.0,
+        )
+
+        # Base reward = 10.0
+        # Early penalty = 5 * 0.1 = 0.5
+        # Energy penalty = 1.0 * 0.1 = 0.1
+        # Total = 10.0 - 0.5 - 0.1 = 9.4
+        assert reward == pytest.approx(9.4, abs=0.01)
+
+    def test_terminal_reward_achieved_late(self):
+        """Test reward when target achieved late (greater penalty)."""
+        calculator = HeatingRewardCalculator(
+            RewardConfig(
+                target_achieved_reward=10.0,
+                late_achievement_penalty_factor=0.2,
+                energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
+            )
+        )
+
+        # Temperature achieved but 5 minutes late (time_until_target = 5)
+        final_state = self.create_observation(
+            indoor_temp=20.0, target_temp=20.0, time_until_target_minutes=5
+        )
+        reward = calculator.calculate_terminal_reward(
+            final_state=final_state,
+            total_energy_consumed_kwh=1.0,
+        )
+
+        # Base reward = 10.0
+        # Late penalty = 5 * 0.2 = 1.0
+        # Energy penalty = 1.0 * 0.1 = 0.1
+        # Total = 10.0 - 1.0 - 0.1 = 8.9
+        assert reward == pytest.approx(8.9, abs=0.01)
+
+    def test_terminal_reward_missed_target_late(self):
+        """Test penalty when target missed and time is late."""
+        calculator = HeatingRewardCalculator(
+            RewardConfig(
+                target_achieved_reward=10.0,
+                target_missed_penalty=5.0,
+                late_achievement_penalty_factor=0.2,
+                energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
+            )
+        )
+
+        # Temperature not achieved and 10 minutes late
+        final_state = self.create_observation(
+            indoor_temp=18.0, target_temp=20.0, time_until_target_minutes=10
+        )
+        reward = calculator.calculate_terminal_reward(
+            final_state=final_state,
+            total_energy_consumed_kwh=0.8,
+        )
+
+        # Target missed penalty = -5.0
+        # Late penalty = 10 * 0.2 = -2.0
+        # Energy penalty = 0.8 * 0.1 = -0.08
+        # Total = -5.0 - 2.0 - 0.08 = -7.08
+        assert reward == pytest.approx(-7.08, abs=0.01)
+
+    def test_terminal_reward_missed_target_on_time(self):
+        """Test penalty when target missed but time has passed."""
         calculator = HeatingRewardCalculator(
             RewardConfig(
                 target_achieved_reward=10.0,
                 target_missed_penalty=5.0,
                 energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
             )
         )
 
-        final_state = self.create_observation(indoor_temp=18.0, target_temp=20.0)
+        # Temperature not achieved, time has passed (time = 0 or negative)
+        final_state = self.create_observation(
+            indoor_temp=18.0, target_temp=20.0, time_until_target_minutes=0
+        )
         reward = calculator.calculate_terminal_reward(
             final_state=final_state,
-            target_achieved=False,
-            episode_duration_minutes=30.0,
             total_energy_consumed_kwh=0.8,
         )
 
         # Target missed penalty = -5.0
-        # Energy penalty = 0.8 * 0.1 = 0.08
+        # Energy penalty = 0.8 * 0.1 = -0.08
         # Total = -5.0 - 0.08 = -5.08
         assert reward == pytest.approx(-5.08, abs=0.01)
 
@@ -397,14 +495,15 @@ class TestHeatingRewardCalculator:
             RewardConfig(
                 target_achieved_reward=10.0,
                 energy_penalty_factor=0.1,
+                target_tolerance_celsius=0.5,
             )
         )
 
-        final_state = self.create_observation(indoor_temp=20.0, target_temp=20.0)
+        final_state = self.create_observation(
+            indoor_temp=20.0, target_temp=20.0, time_until_target_minutes=0
+        )
         reward = calculator.calculate_terminal_reward(
             final_state=final_state,
-            target_achieved=True,
-            episode_duration_minutes=30.0,
             total_energy_consumed_kwh=0.0,
         )
 

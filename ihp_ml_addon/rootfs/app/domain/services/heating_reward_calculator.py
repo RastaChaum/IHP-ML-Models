@@ -92,42 +92,84 @@ class HeatingRewardCalculator(IRewardCalculator):
     def calculate_terminal_reward(
         self,
         final_state: RLObservation,
-        target_achieved: bool,
-        episode_duration_minutes: float,
         total_energy_consumed_kwh: float,
     ) -> float:
         """Calculate the terminal reward at the end of an episode.
 
+        The target is considered achieved when:
+        - Temperature is within tolerance of target_temp
+        - At the scheduled time (time_until_target_minutes == 0)
+
+        Timing penalties:
+        - If time_until_target_minutes > 0: Target not reached on time (late) - higher penalty
+        - If time_until_target_minutes < 0: Target reached too early - lower penalty
+        - If time_until_target_minutes == 0: Perfect timing
+
         Args:
             final_state: The final observation state
-            target_achieved: Whether the target temperature was reached
-            episode_duration_minutes: Total duration of the episode
             total_energy_consumed_kwh: Total energy consumed during episode
 
         Returns:
             Terminal reward value
         """
+        # Determine if target temperature is achieved
+        temp_diff = abs(final_state.indoor_temp - final_state.target_temp)
+        temp_achieved = temp_diff <= self._config.target_tolerance_celsius
+
+        # Determine timing (negative = early, 0 = on time, positive = late)
+        time_delta = final_state.time_until_target_minutes
+
         logger.info(
             f"Calculating terminal reward for device {final_state.device_id}: "
-            f"target_achieved={target_achieved}, "
-            f"duration={episode_duration_minutes:.1f}min, "
+            f"temp_achieved={temp_achieved}, "
+            f"temp_diff={temp_diff:.2f}°C, "
+            f"time_delta={time_delta:.1f}min, "
             f"energy={total_energy_consumed_kwh:.3f}kWh"
         )
 
         reward = 0.0
 
-        if target_achieved:
-            # Large positive reward for achieving target
+        if temp_achieved and time_delta == 0:
+            # Perfect: target reached at exactly the right time
             reward += self._config.target_achieved_reward
             logger.debug(
-                f"Target achieved reward: {self._config.target_achieved_reward:.3f}"
+                f"Target achieved on time reward: {self._config.target_achieved_reward:.3f}"
+            )
+        elif temp_achieved and time_delta < 0:
+            # Target reached early - base reward minus early penalty
+            reward += self._config.target_achieved_reward
+            early_penalty = abs(time_delta) * self._config.early_achievement_penalty_factor
+            reward -= early_penalty
+            logger.debug(
+                f"Target achieved early: base_reward={self._config.target_achieved_reward:.3f}, "
+                f"early_penalty={early_penalty:.3f}"
+            )
+        elif temp_achieved and time_delta > 0:
+            # Target reached late - base reward minus late penalty
+            reward += self._config.target_achieved_reward
+            late_penalty = time_delta * self._config.late_achievement_penalty_factor
+            reward -= late_penalty
+            logger.debug(
+                f"Target achieved late: base_reward={self._config.target_achieved_reward:.3f}, "
+                f"late_penalty={late_penalty:.3f}"
             )
         else:
-            # Large penalty for missing target
-            reward -= self._config.target_missed_penalty
-            logger.debug(
-                f"Target missed penalty: {self._config.target_missed_penalty:.3f}"
-            )
+            # Temperature target not achieved
+            if time_delta > 0:
+                # Still waiting for target - severe penalty
+                missed_penalty = self._config.target_missed_penalty
+                late_penalty = time_delta * self._config.late_achievement_penalty_factor
+                reward -= (missed_penalty + late_penalty)
+                logger.debug(
+                    f"Target missed and late: missed_penalty={missed_penalty:.3f}, "
+                    f"late_penalty={late_penalty:.3f}"
+                )
+            else:
+                # Target time passed but temperature not achieved - base penalty
+                reward -= self._config.target_missed_penalty
+                logger.debug(
+                    f"Target missed: penalty={self._config.target_missed_penalty:.3f}"
+                )
 
         # Additional energy penalty for total consumption
         total_energy_penalty = (

@@ -175,12 +175,8 @@ class RLObservation:
         if not 0 <= self.hour_of_day <= 23:
             raise ValueError(f"hour_of_day must be between 0 and 23, got {self.hour_of_day}")
 
-        # Time validation (required field)
-        if self.time_until_target_minutes < 0:
-            raise ValueError(
-                f"time_until_target_minutes must be non-negative, "
-                f"got {self.time_until_target_minutes}"
-            )
+        # Time validations
+        # Note: time_until_target_minutes can be negative (early), zero (on time), or positive (late)
         if (
             self.time_heating_on_recent_seconds is not None
             and self.time_heating_on_recent_seconds < 0
@@ -237,32 +233,23 @@ class RLAction:
 
     Attributes:
         action_type: Type of heating action to take
-        value: Value associated with the action (e.g., target temperature)
+        value: Target temperature setpoint (always required, even for TURN_ON/TURN_OFF)
         decision_timestamp: When this decision was made
         confidence_score: Optional confidence score for the action (0.0 to 1.0)
     """
 
     action_type: HeatingActionType
-    value: float | None
+    value: float
     decision_timestamp: datetime
     confidence_score: float | None = None
 
     def __post_init__(self) -> None:
         """Validate action values."""
-        # Value validation based on action type
-        if self.action_type == HeatingActionType.SET_TARGET_TEMPERATURE:
-            if self.value is None:
-                raise ValueError(
-                    "value must be provided for SET_TARGET_TEMPERATURE action"
-                )
-            if not 0 <= self.value <= 50:
-                raise ValueError(
-                    f"target temperature value must be between 0 and 50, got {self.value}"
-                )
-        elif self.action_type in (HeatingActionType.TURN_ON, HeatingActionType.TURN_OFF):
-            # These actions typically don't need a value, but we allow it
-            if self.value is not None and self.value < 0:
-                raise ValueError(f"action value must be non-negative if provided, got {self.value}")
+        # Value is always required and must be a valid temperature setpoint
+        if not 0 <= self.value <= 50:
+            raise ValueError(
+                f"target temperature value must be between 0 and 50, got {self.value}"
+            )
 
         # Confidence score validation
         if self.confidence_score is not None and not 0.0 <= self.confidence_score <= 1.0:
