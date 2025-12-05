@@ -16,8 +16,10 @@ from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from domain.entities import HeatingState
 from domain.interfaces import IHomeAssistantHistoryReader
 from domain.interfaces.reward_calculator import IRewardCalculator
+from domain.services import RLActionService, RLEpisodeService
 from domain.value_objects import (
     EntityState,
     HeatingActionType,
@@ -49,6 +51,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         ha_token: str | None = None,
         timeout: int = 30,
         reward_calculator: IRewardCalculator | None = None,
+        action_service: RLActionService | None = None,
+        episode_service: RLEpisodeService | None = None,
     ) -> None:
         """Initialize the Home Assistant history reader.
 
@@ -57,6 +61,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             ha_token: Long-lived access token (defaults to supervisor token)
             timeout: Request timeout in seconds
             reward_calculator: Optional reward calculator for RL experience construction
+            action_service: Optional action inference service (defaults to new instance)
+            episode_service: Optional episode termination service (defaults to new instance)
         """
         # Default to Supervisor API for addons
         self._ha_url = ha_url or os.getenv(
@@ -65,6 +71,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self._ha_token = ha_token or os.getenv("SUPERVISOR_TOKEN", "")
         self._timeout = timeout
         self._reward_calculator = reward_calculator
+        
+        # Domain services for RL logic
+        self._action_service = action_service or RLActionService()
+        self._episode_service = episode_service or RLEpisodeService()
 
         _LOGGER.info("HA History Reader initialized with URL: %s", self._ha_url)
 
@@ -1007,7 +1017,25 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         if heating_state_record is None:
             return None
 
-        is_heating_on = self._extract_heating_state(heating_state_record)
+        # Use HeatingState entity to extract state information
+        try:
+            heating_state = HeatingState.from_ha_state_record(heating_state_record)
+            
+            # For binary sensors (non-climate entities), the target_temp comes from 
+            # a separate entity, so we need to update it
+            entity_id = heating_state_record.get("entity_id", "")
+            if not entity_id.startswith("climate."):
+                # Use the target temp we already extracted
+                heating_state = HeatingState(
+                    is_on=heating_state.is_on,
+                    preset_mode=heating_state.preset_mode,
+                    target_temp=target_temp,
+                )
+            
+            is_heating_on = heating_state.is_heating(indoor_temp)
+        except (ValueError, KeyError) as e:
+            _LOGGER.debug("Failed to extract heating state at %s: %s", timestamp, e)
+            return None
 
         # Extract optional fields
         outdoor_temp = None
@@ -1216,35 +1244,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
         return closest_record
 
-    def _extract_heating_state(self, state_record: dict[str, Any]) -> bool:
-        """Extract heating on/off state from a history record.
 
-        Args:
-            state_record: History record for heating state entity
-
-        Returns:
-            True if heating is on, False otherwise
-        """
-        # Check if entity is a climate entity
-        entity_id = state_record.get("entity_id", "")
-        is_climate = entity_id.startswith("climate.")
-
-        if is_climate:
-            attributes = state_record.get("attributes", {})
-            hvac_action = attributes.get("hvac_action", "")
-            hvac_mode = attributes.get("hvac_mode", "")
-            state = state_record.get("state", "")
-
-            # Heating is ON if hvac_action is 'heating' OR state is 'heat'/'heating'
-            return (
-                (hvac_action and hvac_action.lower() in ("heating", "on"))
-                or (state and state.lower() in ("heat", "heating"))
-                or (hvac_mode and hvac_mode.lower() == "heat")
-            )
-        else:
-            # For binary_sensor or switch: check state
-            state = state_record.get("state", "").lower()
-            return state in ("on", "heat", "heating", "true", "1")
 
     def _calculate_temp_change(
         self,
@@ -1278,6 +1278,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     ) -> RLAction:
         """Infer the action taken between two observations.
 
+        Delegates to domain service for business logic.
+
         Args:
             current_obs: Current observation
             next_obs: Next observation
@@ -1285,23 +1287,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             Inferred RLAction
         """
-        # Infer action based on heating state transition
-        if not current_obs.is_heating_on and next_obs.is_heating_on:
-            action_type = HeatingActionType.TURN_ON
-        elif current_obs.is_heating_on and not next_obs.is_heating_on:
-            action_type = HeatingActionType.TURN_OFF
-        elif abs(current_obs.target_temp - next_obs.target_temp) > 0.1:
-            action_type = HeatingActionType.SET_TARGET_TEMPERATURE
-        else:
-            action_type = HeatingActionType.NO_OP
-
-        # Use the target temperature from the next state as the action value
-        return RLAction(
-            action_type=action_type,
-            value=next_obs.target_temp,
-            decision_timestamp=next_obs.timestamp,
-            confidence_score=None,
-        )
+        return self._action_service.infer_action(current_obs, next_obs)
 
     def _is_episode_done(
         self,
@@ -1310,10 +1296,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
     ) -> bool:
         """Determine if an episode should end.
 
-        An episode ends when:
-        - Target temperature is reached (within tolerance)
-        - Significant time has passed since target change
-        - Target temperature changes significantly
+        Delegates to domain service for business logic.
 
         Args:
             current_obs: Current observation
@@ -1322,14 +1305,4 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             True if episode should end, False otherwise
         """
-        # Episode ends if target temperature changed significantly
-        if abs(current_obs.target_temp - previous_obs.target_temp) > 0.5:
-            return True
-
-        # Episode ends if target is achieved
-        temp_diff = abs(current_obs.indoor_temp - current_obs.target_temp)
-        if temp_diff <= 0.3:  # Within 0.3°C tolerance
-            return True
-
-        # Episode continues by default
-        return False
+        return self._episode_service.is_episode_done(current_obs, previous_obs)
