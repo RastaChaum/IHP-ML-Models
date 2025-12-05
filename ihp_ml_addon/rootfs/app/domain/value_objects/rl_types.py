@@ -55,25 +55,33 @@ class RLObservation:
     and contextual data.
 
     Attributes:
-        # Temperatures and Environmental Conditions
-        current_temp: Current indoor temperature in °C
-        current_temp_entity: Entity state for current temperature sensor
-        outdoor_temp: Outdoor temperature in °C
-        outdoor_temp_entity: Entity state for outdoor temperature sensor
-        humidity: Relative humidity percentage (0-100)
-        humidity_entity: Entity state for humidity sensor
+        # Temperatures and Environmental Conditions (required)
+        indoor_temp: Indoor temperature in °C
+        indoor_temp_entity: Entity state for indoor temperature sensor
         timestamp: When this observation was recorded
+        
+        # Temperatures and Environmental Conditions (optional)
+        outdoor_temp: Outdoor temperature in °C (optional)
+        outdoor_temp_entity: Entity state for outdoor temperature sensor (optional)
+        indoor_humidity: Relative humidity percentage (0-100, optional)
+        indoor_humidity_entity: Entity state for humidity sensor (optional)
 
-        # Target Information
-        target_temp_from_schedule: Target temperature from scheduler (if available)
+        # Target Information (required for RL decision-making)
+        target_temp_from_schedule: Target temperature from scheduler
+        target_temp_entity: Entity state for target temperature sensor
         time_until_target_minutes: Minutes until target should be reached
-        current_target_achieved_percentage: Progress towards target (0-100%)
+        current_target_achieved_percentage: Progress towards target (0-100%, optional)
 
-        # Heating System State
+        # Heating System State (required)
         is_heating_on: Whether heating is currently on
+        
+        # Heating System State (optional with entity states)
         heating_output_percent: Heating output percentage (if PWM/proportional control)
+        heating_output_entity: Entity state for heating output sensor
         energy_consumption_recent_kwh: Recent energy consumption in kWh
+        energy_consumption_entity: Entity state for energy consumption sensor
         time_heating_on_recent_seconds: Recent heating duration in seconds
+        time_heating_on_entity: Entity state for heating on time sensor
 
         # Trends and Dynamics
         indoor_temp_change_15min: Indoor temperature change over last 15 minutes
@@ -94,24 +102,28 @@ class RLObservation:
     """
 
     # Temperatures and Environmental Conditions
-    current_temp: float
-    current_temp_entity: EntityState
-    outdoor_temp: float
-    outdoor_temp_entity: EntityState
-    humidity: float
-    humidity_entity: EntityState
+    indoor_temp: float
+    indoor_temp_entity: EntityState
+    outdoor_temp: float | None
+    outdoor_temp_entity: EntityState | None
+    indoor_humidity: float | None
+    indoor_humidity_entity: EntityState | None
     timestamp: datetime
 
-    # Target Information
-    target_temp_from_schedule: float | None
-    time_until_target_minutes: int | None
+    # Target Information (required for RL)
+    target_temp_from_schedule: float
+    target_temp_entity: EntityState
+    time_until_target_minutes: int
     current_target_achieved_percentage: float | None
 
-    # Heating System State
+    # Heating System State (required)
     is_heating_on: bool
     heating_output_percent: float | None
+    heating_output_entity: EntityState | None
     energy_consumption_recent_kwh: float | None
+    energy_consumption_entity: EntityState | None
     time_heating_on_recent_seconds: int | None
+    time_heating_on_entity: EntityState | None
 
     # Trends and Dynamics
     indoor_temp_change_15min: float | None
@@ -133,22 +145,19 @@ class RLObservation:
     def __post_init__(self) -> None:
         """Validate observation values."""
         # Temperature validations
-        if not -50 <= self.outdoor_temp <= 60:
+        if self.outdoor_temp is not None and not -50 <= self.outdoor_temp <= 60:
             raise ValueError(f"outdoor_temp must be between -50 and 60, got {self.outdoor_temp}")
-        if not -20 <= self.current_temp <= 50:
-            raise ValueError(f"current_temp must be between -20 and 50, got {self.current_temp}")
-        if (
-            self.target_temp_from_schedule is not None
-            and not 0 <= self.target_temp_from_schedule <= 50
-        ):
+        if not -25 <= self.indoor_temp <= 50:
+            raise ValueError(f"indoor_temp must be between -25 and 50, got {self.indoor_temp}")
+        if not 0 <= self.target_temp_from_schedule <= 50:
             raise ValueError(
                 f"target_temp_from_schedule must be between 0 and 50, "
                 f"got {self.target_temp_from_schedule}"
             )
 
         # Humidity validation
-        if not 0 <= self.humidity <= 100:
-            raise ValueError(f"humidity must be between 0 and 100, got {self.humidity}")
+        if self.indoor_humidity is not None and not 0 <= self.indoor_humidity <= 100:
+            raise ValueError(f"indoor_humidity must be between 0 and 100, got {self.indoor_humidity}")
 
         # Target achievement validation
         if (
@@ -166,8 +175,8 @@ class RLObservation:
         if not 0 <= self.hour_of_day <= 23:
             raise ValueError(f"hour_of_day must be between 0 and 23, got {self.hour_of_day}")
 
-        # Time validation
-        if self.time_until_target_minutes is not None and self.time_until_target_minutes < 0:
+        # Time validation (required field)
+        if self.time_until_target_minutes < 0:
             raise ValueError(
                 f"time_until_target_minutes must be non-negative, "
                 f"got {self.time_until_target_minutes}"
@@ -299,19 +308,22 @@ class TrainingRequest:
 
     Attributes:
         device_id: Device/zone identifier to train model for
-        start_time: Start of historical period to fetch
-        end_time: End of historical period to fetch
+        start_time: Start of historical period to fetch (None = use default history window)
+        end_time: End of historical period to fetch (defaults to now)
 
-        # Entity IDs for data retrieval
-        current_temp_entity_id: Entity ID for current indoor temperature
-        outdoor_temp_entity_id: Entity ID for outdoor temperature
-        humidity_entity_id: Entity ID for humidity sensor
+        # Entity IDs for data retrieval (required)
+        indoor_temp_entity_id: Entity ID for indoor temperature
+        target_temp_entity_id: Entity ID for target temperature (from scheduler/thermostat)
+        heating_state_entity_id: Entity ID for heating state (on/off)
+        
+        # Optional entity IDs
+        outdoor_temp_entity_id: Entity ID for outdoor temperature (optional)
+        indoor_humidity_entity_id: Entity ID for humidity sensor (optional)
         window_or_door_open_entity_id: Entity ID for window/door sensor (optional)
         heating_power_entity_id: Entity ID for heating power sensor (optional)
         heating_on_time_entity_id: Entity ID for heating on time sensor (optional)
         outdoor_temp_forecast_1h_entity_id: Entity ID for 1h forecast (optional)
         outdoor_temp_forecast_3h_entity_id: Entity ID for 3h forecast (optional)
-        versatile_thermostat_entity_id: Entity ID for thermostat (target temp)
 
         # Training configuration
         behavioral_cloning_epochs: Number of epochs for initial behavioral cloning
@@ -319,16 +331,19 @@ class TrainingRequest:
     """
 
     device_id: str
-    start_time: datetime
-    end_time: datetime
-
+    
     # Required entity IDs
-    current_temp_entity_id: str
-    outdoor_temp_entity_id: str
-    humidity_entity_id: str
-    versatile_thermostat_entity_id: str
+    indoor_temp_entity_id: str
+    target_temp_entity_id: str
+    heating_state_entity_id: str
+
+    # Time range (start_time can be None for default window, end_time defaults to now)
+    start_time: datetime | None = None
+    end_time: datetime | None = None
 
     # Optional entity IDs
+    outdoor_temp_entity_id: str | None = None
+    indoor_humidity_entity_id: str | None = None
     window_or_door_open_entity_id: str | None = None
     heating_power_entity_id: str | None = None
     heating_on_time_entity_id: str | None = None
@@ -343,16 +358,19 @@ class TrainingRequest:
         """Validate training request values."""
         if not self.device_id:
             raise ValueError("device_id cannot be empty")
-        if not self.current_temp_entity_id:
-            raise ValueError("current_temp_entity_id cannot be empty")
-        if not self.outdoor_temp_entity_id:
-            raise ValueError("outdoor_temp_entity_id cannot be empty")
-        if not self.humidity_entity_id:
-            raise ValueError("humidity_entity_id cannot be empty")
-        if not self.versatile_thermostat_entity_id:
-            raise ValueError("versatile_thermostat_entity_id cannot be empty")
+        if not self.indoor_temp_entity_id:
+            raise ValueError("indoor_temp_entity_id cannot be empty")
+        if not self.target_temp_entity_id:
+            raise ValueError("target_temp_entity_id cannot be empty")
+        if not self.heating_state_entity_id:
+            raise ValueError("heating_state_entity_id cannot be empty")
 
-        if self.start_time >= self.end_time:
+        # Validate time range if both are provided
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.start_time >= self.end_time
+        ):
             raise ValueError("start_time must be before end_time")
 
         if self.behavioral_cloning_epochs < 0:
