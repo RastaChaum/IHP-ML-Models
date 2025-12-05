@@ -8,10 +8,16 @@ from .ha_history_reader import IHomeAssistantHistoryReader
 from .ml_model_predictor import IMLModelPredictor
 from .ml_model_trainer import IMLModelTrainer
 from .model_storage import IModelStorage
+from .reward_calculator import IRewardCalculator
+from .rl_model_predictor import IRLModelPredictor
+from .rl_model_trainer import IRLModelTrainer
 
 __all__ = [
     "IHomeAssistantHistoryReader",
     "IMLModelPredictor",
     "IMLModelTrainer",
     "IModelStorage",
+    "IRewardCalculator",
+    "IRLModelPredictor",
+    "IRLModelTrainer",
 ]
