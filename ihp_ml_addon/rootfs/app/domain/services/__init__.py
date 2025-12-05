@@ -9,6 +9,6 @@ from .heating_reward_calculator import HeatingRewardCalculator
 
 __all__ = [
     "FakeDataGenerator",
-    "HeatingPredictionService",
     "HeatingRewardCalculator",
+    "HeatingPredictionService",
 ]

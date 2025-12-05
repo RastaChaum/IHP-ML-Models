@@ -14,21 +14,14 @@ class RewardConfig:
     towards optimal heating control behavior.
 
     Attributes:
-        # Progress rewards (positive reinforcement for approaching target)
-        progress_reward_factor: Multiplier for temperature progress towards target
-        
-        # Penalties (negative reinforcement)
-        drift_penalty_factor: Penalty factor when temperature moves away from target
-        overshoot_penalty_factor: Penalty factor when temperature exceeds target
-        energy_penalty_factor: Penalty per kWh of energy consumed
-        
-        # Terminal rewards
-        target_achieved_reward: Large reward when target is reached on time
-        target_missed_penalty: Large penalty when target is missed
-        
-        # Thresholds
-        target_tolerance_celsius: Temperature tolerance for considering target achieved
-        overshoot_threshold_celsius: Temperature above target to consider overshoot
+        progress_reward_factor: Multiplier for temperature progress towards target.
+        drift_penalty_factor: Penalty factor when temperature moves away from target.
+        overshoot_penalty_factor: Penalty factor when temperature exceeds target.
+        energy_penalty_factor: Penalty per kWh of energy consumed.
+        target_achieved_reward: Large reward when target is reached on time.
+        target_missed_penalty: Large penalty when target is missed.
+        target_tolerance_celsius: Temperature tolerance for considering target achieved.
+        overshoot_threshold_celsius: Temperature above target to consider overshoot.
     """
 
     # Progress rewards
