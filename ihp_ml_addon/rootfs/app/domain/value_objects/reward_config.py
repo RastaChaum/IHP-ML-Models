@@ -30,9 +30,9 @@ class RewardConfig:
     progress_reward_factor: float = 1.0
 
     # Penalties
-    drift_penalty_factor: float = 0.5
-    overshoot_penalty_factor: float = 2.0
-    energy_penalty_factor: float = 0.1
+    drift_penalty_factor: float = 1.5
+    overshoot_penalty_factor: float = 1.0
+    energy_penalty_factor: float = 0.3
 
     # Terminal rewards
     target_achieved_reward: float = 10.0
@@ -41,8 +41,8 @@ class RewardConfig:
     late_achievement_penalty_factor: float = 1.0
 
     # Thresholds
-    target_tolerance_celsius: float = 0.5
-    overshoot_threshold_celsius: float = 1.0
+    target_tolerance_celsius: float = 0.2
+    overshoot_threshold_celsius: float = 0.5
 
     def __post_init__(self) -> None:
         """Validate reward configuration values."""

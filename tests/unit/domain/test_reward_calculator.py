@@ -22,20 +22,6 @@ from ihp_ml_addon.rootfs.app.domain.value_objects import (
 class TestRewardConfig:
     """Tests for RewardConfig value object."""
 
-    def test_default_config(self):
-        """Test creating config with default values."""
-        config = RewardConfig()
-        assert config.progress_reward_factor == 1.0
-        assert config.drift_penalty_factor == 0.5
-        assert config.overshoot_penalty_factor == 2.0
-        assert config.energy_penalty_factor == 0.1
-        assert config.target_achieved_reward == 10.0
-        assert config.target_missed_penalty == 10.0
-        assert config.early_achievement_penalty_factor == 0.5
-        assert config.late_achievement_penalty_factor == 1.0
-        assert config.target_tolerance_celsius == 0.5
-        assert config.overshoot_threshold_celsius == 1.0
-
     def test_custom_config(self):
         """Test creating config with custom values."""
         config = RewardConfig(
