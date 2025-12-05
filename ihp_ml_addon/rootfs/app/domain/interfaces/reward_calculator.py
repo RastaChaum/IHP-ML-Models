@@ -49,21 +49,23 @@ class IRewardCalculator(ABC):
     def calculate_terminal_reward(
         self,
         final_state: RLObservation,
-        target_achieved: bool,
-        episode_duration_minutes: float,
         total_energy_consumed_kwh: float,
     ) -> float:
         """Calculate the terminal reward at the end of an episode.
 
-        This method computes a final reward when an episode ends, which could be:
-        - Target temperature reached successfully
-        - Time limit exceeded
-        - Failure to reach target
+        This method computes a final reward when an episode ends. Target achievement
+        is determined internally based on:
+        - Temperature within tolerance of target_temp
+        - Timing relative to scheduled target time (time_until_target_minutes)
+
+        The reward accounts for:
+        - Perfect timing (time_until_target_minutes == 0)
+        - Early achievement (time_until_target_minutes < 0) - lesser penalty
+        - Late achievement (time_until_target_minutes > 0) - greater penalty
 
         Args:
-            final_state: The final observation state
-            target_achieved: Whether the target temperature was reached
-            episode_duration_minutes: Total duration of the episode
+            final_state: The final observation state containing temperature,
+                        target, and timing information
             total_energy_consumed_kwh: Total energy consumed during episode
 
         Returns:

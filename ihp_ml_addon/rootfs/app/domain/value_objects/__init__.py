@@ -8,6 +8,7 @@ from .device_config import DeviceConfig
 from .model_info import ModelInfo
 from .prediction_request import PredictionRequest
 from .prediction_result import PredictionResult
+from .reward_config import RewardConfig
 from .rl_types import (
     EntityState,
     HeatingActionType,
@@ -25,6 +26,7 @@ __all__ = [
     "ModelInfo",
     "PredictionRequest",
     "PredictionResult",
+    "RewardConfig",
     "RLAction",
     "RLExperience",
     "RLObservation",
