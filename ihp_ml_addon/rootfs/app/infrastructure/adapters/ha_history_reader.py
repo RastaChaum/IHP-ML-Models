@@ -945,11 +945,11 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         end_time = training_request.end_time or datetime.now()
 
         # Ensure timezone-aware datetimes for comparison with HA data
-        import pytz
+        from datetime import timezone as tz
         if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=pytz.UTC)
+            start_time = start_time.replace(tzinfo=tz.utc)
         if end_time.tzinfo is None:
-            end_time = end_time.replace(tzinfo=pytz.UTC)
+            end_time = end_time.replace(tzinfo=tz.utc)
 
         current_time = start_time
         while current_time <= end_time:
@@ -1032,12 +1032,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             )
             window_or_door_open = window_value is not None and window_value > 0
 
+        # Note: heating_power_entity_id represents energy consumption in kWh
+        # For actual heating output percentage (PWM control), a separate entity would be needed
+        # in the TrainingRequest. For now, we leave heating_output_percent as None.
         heating_output_percent = None
-        if training_request.heating_power_entity_id:
-            heating_output_percent = self._get_value_at_time(
-                history_data.get(training_request.heating_power_entity_id, []),
-                timestamp,
-            )
 
         energy_consumption_recent_kwh = None
         if training_request.heating_power_entity_id:
@@ -1116,12 +1114,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 last_changed_minutes=0.0,
             )
 
+        # Note: heating_output_entity would require a separate entity ID for PWM control
         heating_output_entity = None
-        if training_request.heating_power_entity_id:
-            heating_output_entity = EntityState(
-                entity_id=training_request.heating_power_entity_id,
-                last_changed_minutes=0.0,
-            )
 
         energy_consumption_entity = None
         if training_request.heating_power_entity_id:

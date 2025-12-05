@@ -536,7 +536,9 @@ class TestRLExperienceExtraction:
         assert observation.outdoor_temp == 5.0
         assert observation.indoor_humidity == 45.0
         assert observation.window_or_door_open is False
-        assert observation.heating_output_percent == 0.5
+        # heating_output_percent would require a separate entity ID (not implemented yet)
+        assert observation.heating_output_percent is None
+        # heating_power_entity_id maps to energy consumption
         assert observation.energy_consumption_recent_kwh == 0.5
         assert observation.time_heating_on_recent_seconds == 300
         assert observation.outdoor_temp_forecast_1h == 4.5
