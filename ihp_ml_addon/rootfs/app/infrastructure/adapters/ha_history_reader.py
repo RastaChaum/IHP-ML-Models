@@ -105,6 +105,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         start_time: datetime,
         end_time: datetime,
         cycle_split_duration_minutes: int | None = None,
+        adjacent_rooms_config: dict[str, dict[str, str]] | None = None,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -140,6 +141,14 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         if humidity_entity_id:
             entity_ids.append(humidity_entity_id)
 
+        # Add adjacent rooms entity IDs
+        if adjacent_rooms_config:
+            for zone_id, room_config in adjacent_rooms_config.items():
+                if "temp_entity_id" in room_config:
+                    entity_ids.append(room_config["temp_entity_id"])
+                if "humidity_entity_id" in room_config:
+                    entity_ids.append(room_config["humidity_entity_id"])
+
         # Fetch history for all entities
         history_data = await self._fetch_history(entity_ids, start_time, end_time)
 
@@ -152,6 +161,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             heating_state_entity_id,
             humidity_entity_id,
             cycle_split_duration_minutes,
+            adjacent_rooms_config,
         )
 
         if not data_points:
@@ -325,6 +335,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         heating_state_entity_id: str,
         humidity_entity_id: str | None,
         cycle_split_duration_minutes: int | None = None,
+        adjacent_rooms_config: dict[str, dict[str, str]] | None = None,
     ) -> list[TrainingDataPoint]:
         """Extract heating cycles from historical data.
 
@@ -387,23 +398,17 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         if cycle_split_duration_minutes:
             _LOGGER.debug("  Cycle split duration: %d minutes", cycle_split_duration_minutes)
 
-        # Detect entity types to determine how to extract values
-        # Check if entities are climate entities (with attributes) or sensors (state only)
-        def is_climate_entity(entity_id: str) -> bool:
-            """Check if entity is a climate entity."""
-            return entity_id.startswith("climate.")
-
-        indoor_is_climate = is_climate_entity(indoor_temp_entity_id)
-        outdoor_is_climate = is_climate_entity(outdoor_temp_entity_id)
-        target_is_climate = is_climate_entity(target_temp_entity_id)
-        heating_is_climate = is_climate_entity(heating_state_entity_id)
-        humidity_is_climate = humidity_entity_id and is_climate_entity(humidity_entity_id)
-
-        _LOGGER.debug("Entity type detection:")
-        _LOGGER.debug("  Indoor temp: %s (climate=%s)", indoor_temp_entity_id, indoor_is_climate)
-        _LOGGER.debug("  Outdoor temp: %s (climate=%s)", outdoor_temp_entity_id, outdoor_is_climate)
-        _LOGGER.debug("  Target temp: %s (climate=%s)", target_temp_entity_id, target_is_climate)
-        _LOGGER.debug("  Heating state: %s (climate=%s)", heating_state_entity_id, heating_is_climate)
+        # Prepare adjacent rooms data
+        adjacent_rooms_data: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        if adjacent_rooms_config:
+            for zone_id, room_config in adjacent_rooms_config.items():
+                adjacent_rooms_data[zone_id] = {}
+                if "temp_entity_id" in room_config:
+                    entity_id = room_config["temp_entity_id"]
+                    adjacent_rooms_data[zone_id]["temp"] = history_data.get(entity_id, [])
+                if "humidity_entity_id" in room_config:
+                    entity_id = room_config["humidity_entity_id"]
+                    adjacent_rooms_data[zone_id]["humidity"] = history_data.get(entity_id, [])
 
         # Track heating cycles
         heating_start: datetime | None = None
@@ -411,6 +416,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         start_outdoor_temp: float | None = None
         start_humidity: float | None = None
         start_target_temp: float | None = None
+        last_cycle_end_time: datetime | None = None
 
         def reset_cycle() -> None:
             """Reset cycle tracking variables."""
@@ -492,6 +498,28 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     sub_cycle_end_temp = current_start_temp + (temp_per_minute * sub_cycle_duration)
 
                     try:
+                        # Extract adjacent rooms values at this timestamp
+                        adjacent_rooms_values = {}
+                        if adjacent_rooms_config:
+                            for zone_id, room_config in adjacent_rooms_config.items():
+                                zone_values = {}
+                                if "temp_entity_id" in room_config:
+                                    temp = self._get_value_at_time(
+                                        adjacent_rooms_data[zone_id].get("temp", []),
+                                        current_start_time,
+                                    )
+                                    if temp is not None:
+                                        zone_values["temp"] = temp
+                                if "humidity_entity_id" in room_config:
+                                    humidity = self._get_value_at_time(
+                                        adjacent_rooms_data[zone_id].get("humidity", []),
+                                        current_start_time,
+                                    )
+                                    if humidity is not None:
+                                        zone_values["humidity"] = humidity
+                                if zone_values:
+                                    adjacent_rooms_values[zone_id] = zone_values
+
                         data_point = TrainingDataPoint(
                             outdoor_temp=start_outdoor_temp,
                             indoor_temp=current_start_temp,
@@ -504,6 +532,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                             minutes_since_last_cycle=minutes_since_prev,
                             heating_duration_minutes=sub_cycle_duration,
                             timestamp=current_start_time,
+                            adjacent_rooms=adjacent_rooms_values if adjacent_rooms_values else None,
                         )
                         data_points.append(data_point)
                     except ValueError as e:
@@ -520,6 +549,28 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 # Handle remaining time if significant (>= 5 minutes)
                 if remaining_minutes >= 5:
                     try:
+                        # Extract adjacent rooms values at this timestamp
+                        adjacent_rooms_values = {}
+                        if adjacent_rooms_config:
+                            for zone_id, room_config in adjacent_rooms_config.items():
+                                zone_values = {}
+                                if "temp_entity_id" in room_config:
+                                    temp = self._get_value_at_time(
+                                        adjacent_rooms_data[zone_id].get("temp", []),
+                                        current_start_time,
+                                    )
+                                    if temp is not None:
+                                        zone_values["temp"] = temp
+                                if "humidity_entity_id" in room_config:
+                                    humidity = self._get_value_at_time(
+                                        adjacent_rooms_data[zone_id].get("humidity", []),
+                                        current_start_time,
+                                    )
+                                    if humidity is not None:
+                                        zone_values["humidity"] = humidity
+                                if zone_values:
+                                    adjacent_rooms_values[zone_id] = zone_values
+
                         data_point = TrainingDataPoint(
                             outdoor_temp=start_outdoor_temp,
                             indoor_temp=current_start_temp,
@@ -532,6 +583,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                             minutes_since_last_cycle=0.0,
                             heating_duration_minutes=remaining_minutes,
                             timestamp=current_start_time,
+                            adjacent_rooms=adjacent_rooms_values if adjacent_rooms_values else None,
                         )
                         data_points.append(data_point)
                     except ValueError as e:
@@ -548,6 +600,29 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                             0.0,
                             (heating_start - last_cycle_end_time).total_seconds() / 60.0,
                         )
+
+                    # Extract adjacent rooms values at this timestamp
+                    adjacent_rooms_values = {}
+                    if adjacent_rooms_config:
+                        for zone_id, room_config in adjacent_rooms_config.items():
+                            zone_values = {}
+                            if "temp_entity_id" in room_config:
+                                temp = self._get_value_at_time(
+                                    adjacent_rooms_data[zone_id].get("temp", []),
+                                    heating_start,
+                                )
+                                if temp is not None:
+                                    zone_values["temp"] = temp
+                            if "humidity_entity_id" in room_config:
+                                humidity = self._get_value_at_time(
+                                    adjacent_rooms_data[zone_id].get("humidity", []),
+                                    heating_start,
+                                )
+                                if humidity is not None:
+                                    zone_values["humidity"] = humidity
+                            if zone_values:
+                                adjacent_rooms_values[zone_id] = zone_values
+
                     data_point = TrainingDataPoint(
                         outdoor_temp=start_outdoor_temp,
                         indoor_temp=start_indoor_temp,
@@ -560,15 +635,13 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                         minutes_since_last_cycle=minutes_since_prev,
                         heating_duration_minutes=duration_minutes,
                         timestamp=heating_start,
+                        adjacent_rooms=adjacent_rooms_values if adjacent_rooms_values else None,
                     )
                     data_points.append(data_point)
                 except ValueError as e:
                     _LOGGER.debug("Skipping invalid data point: %s", e)
             # Update the last cycle end time to the end of the recorded cycle
             last_cycle_end_time = end_timestamp
-
-        # Track the end time of the last recorded cycle to compute gaps
-        last_cycle_end_time: datetime | None = None
 
         for state_record in heating_states:
             timestamp_str = state_record.get("last_changed") or state_record.get("last_updated")

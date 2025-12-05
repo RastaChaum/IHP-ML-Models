@@ -27,6 +27,7 @@ class IHomeAssistantHistoryReader(ABC):
         start_time: datetime,
         end_time: datetime,
         cycle_split_duration_minutes: int | None = None,
+        adjacent_rooms_config: dict[str, dict[str, str]] | None = None,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
@@ -41,6 +42,8 @@ class IHomeAssistantHistoryReader(ABC):
             cycle_split_duration_minutes: Optional duration in minutes to split
                 long heating cycles into smaller sub-cycles. If None, cycles
                 are not split.
+            adjacent_rooms_config: Optional configuration for adjacent rooms.
+                Maps zone_id to dict of entity IDs (temp_entity_id, humidity_entity_id, etc.)
 
         Returns:
             TrainingData with extracted heating cycles

@@ -145,6 +145,7 @@ class MLApplicationService:
             start_time=start_time,
             end_time=end_time,
             cycle_split_duration_minutes=device_config.cycle_split_duration_minutes,
+            adjacent_rooms_config=device_config.adjacent_rooms,
         )
 
         _LOGGER.info(

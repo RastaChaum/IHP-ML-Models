@@ -26,6 +26,14 @@ class DeviceConfig:
         cycle_split_duration_minutes: Optional duration in minutes to split long
             heating cycles into smaller sub-cycles for more training data.
             If None, cycles are not split. Must be at least 10 minutes if set.
+        adjacent_rooms: Optional dict mapping zone IDs to their sensor entity IDs.
+            Format: {
+                "zone_id": {
+                    "temp_entity_id": str,
+                    "humidity_entity_id": str (optional),
+                    "target_temp_entity_id": str
+                }
+            }
     """
 
     device_id: str
@@ -36,6 +44,7 @@ class DeviceConfig:
     humidity_entity_id: str | None = None
     history_days: int = 30
     cycle_split_duration_minutes: int | None = None
+    adjacent_rooms: dict[str, dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
         """Validate device configuration."""

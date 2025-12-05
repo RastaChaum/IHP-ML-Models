@@ -263,7 +263,16 @@ async def train_with_device_config() -> Response:
         "history_days": int (optional, default: 30),
         "cycle_split_duration_minutes": int (optional) - if set, splits long
             heating cycles into smaller sub-cycles of this duration (in minutes)
-            for more training data. Must be between 10 and 300 if set.
+            for more training data. Must be between 10 and 300 if set.,
+        "adjacent_rooms": dict (optional) - adjacent room sensor entity IDs
+            Format: {
+                "zone_id": {
+                    "temp_entity_id": str,
+                    "humidity_entity_id": str (optional),
+                    "target_temp_entity_id": str
+                },
+                ...
+            }
     }
     """
     try:
@@ -309,6 +318,7 @@ async def train_with_device_config() -> Response:
                 humidity_entity_id=data.get("humidity_entity_id"),
                 history_days=history_days,
                 cycle_split_duration_minutes=cycle_split_duration_minutes,
+                adjacent_rooms=data.get("adjacent_rooms"),
             )
         except ValueError as e:
             return jsonify({"error": f"Invalid device configuration: {e}"}), 400
