@@ -111,7 +111,7 @@ class RLObservation:
     timestamp: datetime
 
     # Target Information (required for RL)
-    target_temp_from_schedule: float
+    target_temp: float
     target_temp_entity: EntityState
     time_until_target_minutes: int
     current_target_achieved_percentage: float | None
@@ -149,10 +149,10 @@ class RLObservation:
             raise ValueError(f"outdoor_temp must be between -50 and 60, got {self.outdoor_temp}")
         if not -25 <= self.indoor_temp <= 50:
             raise ValueError(f"indoor_temp must be between -25 and 50, got {self.indoor_temp}")
-        if not 0 <= self.target_temp_from_schedule <= 50:
+        if not 0 <= self.target_temp <= 50:
             raise ValueError(
                 f"target_temp_from_schedule must be between 0 and 50, "
-                f"got {self.target_temp_from_schedule}"
+                f"got {self.target_temp}"
             )
 
         # Humidity validation
@@ -215,18 +215,18 @@ class RLObservation:
         # Forecast validations
         if (
             self.outdoor_temp_forecast_1h is not None
-            and not -50 <= self.outdoor_temp_forecast_1h <= 60
+            and not -25 <= self.outdoor_temp_forecast_1h <= 50
         ):
             raise ValueError(
-                f"outdoor_temp_forecast_1h must be between -50 and 60, "
+                f"outdoor_temp_forecast_1h must be between -25 and 50, "
                 f"got {self.outdoor_temp_forecast_1h}"
             )
         if (
             self.outdoor_temp_forecast_3h is not None
-            and not -50 <= self.outdoor_temp_forecast_3h <= 60
+            and not -25 <= self.outdoor_temp_forecast_3h <= 50
         ):
             raise ValueError(
-                f"outdoor_temp_forecast_3h must be between -50 and 60, "
+                f"outdoor_temp_forecast_3h must be between -25 and 50, "
                 f"got {self.outdoor_temp_forecast_3h}"
             )
 
@@ -364,6 +364,9 @@ class TrainingRequest:
             raise ValueError("target_temp_entity_id cannot be empty")
         if not self.heating_state_entity_id:
             raise ValueError("heating_state_entity_id cannot be empty")
+
+        if self.end_time is None:
+            object.__setattr__(self, "end_time", datetime.now())
 
         # Validate time range if both are provided
         if (

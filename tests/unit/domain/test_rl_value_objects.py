@@ -77,7 +77,7 @@ class TestRLObservation:
             "indoor_humidity": 65.0,
             "indoor_humidity_entity": EntityState("sensor.humidity", 0.0),
             "timestamp": datetime.now(),
-            "target_temp_from_schedule": 22.0,
+            "target_temp": 22.0,
             "target_temp_entity": EntityState("sensor.target_temp", 0.0),
             "time_until_target_minutes": 30,
             "current_target_achieved_percentage": 50.0,
@@ -190,7 +190,7 @@ class TestRLObservation:
             indoor_humidity=None,
             indoor_humidity_entity=None,
             timestamp=datetime.now(),
-            target_temp_from_schedule=22.0,
+            target_temp=22.0,
             target_temp_entity=EntityState("sensor.target_temp", 0.0),
             time_until_target_minutes=30,
             current_target_achieved_percentage=None,
@@ -212,7 +212,7 @@ class TestRLObservation:
             device_id="ihp_salon",
         )
         assert obs.indoor_temp == 20.0
-        assert obs.target_temp_from_schedule == 22.0
+        assert obs.target_temp == 22.0
         assert obs.time_until_target_minutes == 30
         assert obs.is_heating_on is True
 
@@ -343,7 +343,7 @@ class TestRLExperience:
             indoor_humidity=65.0,
             indoor_humidity_entity=EntityState("sensor.humidity", 0.0),
             timestamp=datetime.now(),
-            target_temp_from_schedule=22.0,
+            target_temp=22.0,
             target_temp_entity=EntityState("sensor.target_temp", 0.0),
             time_until_target_minutes=30,
             current_target_achieved_percentage=50.0,
@@ -506,7 +506,7 @@ class TestTrainingRequest:
             start_time=None,
         )
         assert request.start_time is None
-        assert request.end_time is None  # end_time defaults to None
+        assert request.end_time is not None  # end_time defaults to now()
 
     def test_start_time_after_end_time_raises_error(self):
         """Test that start_time after end_time raises ValueError."""
