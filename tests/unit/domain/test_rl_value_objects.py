@@ -4,6 +4,7 @@ Tests for RL-related value objects ensuring immutability,
 validation, and correct behavior.
 """
 
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta
 
 import pytest
@@ -49,7 +50,7 @@ class TestEntityState:
     def test_entity_state_is_frozen(self):
         """Test that EntityState is immutable."""
         entity = EntityState(entity_id="sensor.temp", last_changed_minutes=1.0)
-        with pytest.raises(Exception):  # dataclass frozen error
+        with pytest.raises(FrozenInstanceError):
             entity.entity_id = "sensor.other"
 
     def test_empty_entity_id_raises_error(self):
@@ -107,7 +108,7 @@ class TestRLObservation:
     def test_observation_is_frozen(self):
         """Test that RLObservation is immutable."""
         obs = self.create_valid_observation()
-        with pytest.raises(Exception):  # dataclass frozen error
+        with pytest.raises(FrozenInstanceError):
             obs.current_temp = 25.0
 
     def test_outdoor_temp_out_of_range_raises_error(self):
@@ -236,7 +237,7 @@ class TestRLAction:
             value=None,
             decision_timestamp=datetime.now(),
         )
-        with pytest.raises(Exception):  # dataclass frozen error
+        with pytest.raises(FrozenInstanceError):
             action.value = 25.0
 
     def test_set_temperature_without_value_raises_error(self):
@@ -356,7 +357,7 @@ class TestRLExperience:
             done=False,
         )
 
-        with pytest.raises(Exception):  # dataclass frozen error
+        with pytest.raises(FrozenInstanceError):
             experience.reward = 2.0
 
     def test_mismatched_device_ids_raises_error(self):
@@ -422,7 +423,7 @@ class TestTrainingRequest:
             versatile_thermostat_entity_id="climate.thermostat",
         )
 
-        with pytest.raises(Exception):  # dataclass frozen error
+        with pytest.raises(FrozenInstanceError):
             request.device_id = "other_device"
 
     def test_empty_device_id_raises_error(self):
