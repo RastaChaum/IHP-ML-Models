@@ -853,3 +853,120 @@ class TestRLExperienceExtraction:
 
         done = reader._is_episode_done(obs2, obs1)
         assert done is True  # Episode should end when target changes significantly
+
+
+class TestHeatingStateExtraction:
+    """Tests for HeatingState extraction from HA records (infrastructure concern)."""
+
+    def test_extract_from_climate_entity_heating(self):
+        """Test extracting HeatingState from climate entity when heating."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "climate.thermostat",
+            "state": "heat",
+            "attributes": {
+                "hvac_action": "heating",
+                "hvac_mode": "heat",
+                "preset_mode": "comfort",
+                "temperature": 21.5,
+            },
+        }
+
+        state = reader._extract_heating_state_from_record(record, target_temp=20.0)
+        assert state.is_on is True
+        assert state.preset_mode == "comfort"
+        assert state.target_temp == 21.5  # Uses climate's own temperature
+
+    def test_extract_from_climate_entity_idle(self):
+        """Test extracting HeatingState from climate entity when idle."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "climate.thermostat",
+            "state": "off",
+            "attributes": {
+                "hvac_action": "idle",
+                "hvac_mode": "off",
+                "preset_mode": "eco",
+                "temperature": 18.0,
+            },
+        }
+
+        state = reader._extract_heating_state_from_record(record, target_temp=20.0)
+        assert state.is_on is False
+        assert state.preset_mode == "eco"
+        assert state.target_temp == 18.0
+
+    def test_extract_from_binary_sensor_on(self):
+        """Test extracting HeatingState from binary sensor when on."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "binary_sensor.heating",
+            "state": "on",
+        }
+
+        state = reader._extract_heating_state_from_record(record, target_temp=21.0)
+        assert state.is_on is True
+        assert state.preset_mode is None
+        assert state.target_temp == 21.0  # Uses provided target_temp
+
+    def test_extract_from_binary_sensor_off(self):
+        """Test extracting HeatingState from binary sensor when off."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "binary_sensor.heating",
+            "state": "off",
+        }
+
+        state = reader._extract_heating_state_from_record(record, target_temp=21.0)
+        assert state.is_on is False
+        assert state.target_temp == 21.0
+
+    def test_extract_from_climate_missing_temperature_raises_error(self):
+        """Test that ValueError is raised when climate entity missing temperature."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "climate.thermostat",
+            "state": "heat",
+            "attributes": {
+                "hvac_action": "heating",
+            },
+        }
+
+        with pytest.raises(ValueError, match="missing temperature"):
+            reader._extract_heating_state_from_record(record, target_temp=20.0)
+
+    def test_extract_from_switch_entity(self):
+        """Test extracting HeatingState from switch entity."""
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        record = {
+            "entity_id": "switch.heater",
+            "state": "on",
+        }
+
+        state = reader._extract_heating_state_from_record(record, target_temp=22.0)
+        assert state.is_on is True
+        assert state.target_temp == 22.0

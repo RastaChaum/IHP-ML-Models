@@ -1018,20 +1018,11 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             return None
 
         # Use HeatingState entity to extract state information
+        # The adapter is responsible for extracting domain entities from HA records
         try:
-            heating_state = HeatingState.from_ha_state_record(heating_state_record)
-            
-            # For binary sensors (non-climate entities), the target_temp comes from 
-            # a separate entity, so we need to update it
-            entity_id = heating_state_record.get("entity_id", "")
-            if not entity_id.startswith("climate."):
-                # Use the target temp we already extracted
-                heating_state = HeatingState(
-                    is_on=heating_state.is_on,
-                    preset_mode=heating_state.preset_mode,
-                    target_temp=target_temp,
-                )
-            
+            heating_state = self._extract_heating_state_from_record(
+                heating_state_record, target_temp
+            )
             is_heating_on = heating_state.is_heating(indoor_temp)
         except (ValueError, KeyError) as e:
             _LOGGER.debug("Failed to extract heating state at %s: %s", timestamp, e)
@@ -1244,7 +1235,64 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
         return closest_record
 
+    def _extract_heating_state_from_record(
+        self, state_record: dict[str, Any], target_temp: float
+    ) -> HeatingState:
+        """Extract HeatingState from a Home Assistant state record.
 
+        This is an infrastructure concern - extracting domain entities from
+        Home Assistant's specific data format.
+
+        Args:
+            state_record: Home Assistant state record dictionary
+            target_temp: Target temperature (from separate entity if needed)
+
+        Returns:
+            HeatingState instance
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+        """
+        entity_id = state_record.get("entity_id", "")
+        is_climate = entity_id.startswith("climate.")
+
+        if is_climate:
+            # Extract from climate entity
+            attributes = state_record.get("attributes", {})
+            hvac_action = attributes.get("hvac_action", "")
+            hvac_mode = attributes.get("hvac_mode", "")
+            state = state_record.get("state", "")
+
+            # Heating is ON if hvac_action is 'heating' OR state is 'heat'/'heating'
+            is_on = (
+                (hvac_action and hvac_action.lower() in ("heating", "on"))
+                or (state and state.lower() in ("heat", "heating"))
+                or (hvac_mode and hvac_mode.lower() == "heat")
+            )
+
+            preset_mode = attributes.get("preset_mode")
+            climate_target_temp = attributes.get("temperature")
+
+            if climate_target_temp is None:
+                raise ValueError(f"Climate entity {entity_id} missing temperature attribute")
+
+            return HeatingState(
+                is_on=is_on,
+                preset_mode=preset_mode,
+                target_temp=float(climate_target_temp),
+            )
+        else:
+            # For binary_sensor or switch: check state only
+            state = state_record.get("state", "").lower()
+            is_on = state in ("on", "heat", "heating", "true", "1")
+
+            # Binary sensors don't have preset_mode
+            # Target temp comes from a separate entity (passed as parameter)
+            return HeatingState(
+                is_on=is_on,
+                preset_mode=None,
+                target_temp=target_temp,
+            )
 
     def _calculate_temp_change(
         self,

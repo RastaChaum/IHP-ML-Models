@@ -51,8 +51,17 @@ class RLActionService:
             action_type = HeatingActionType.TURN_ON
         elif current_obs.is_heating_on and not next_obs.is_heating_on:
             action_type = HeatingActionType.TURN_OFF
-        elif abs(current_obs.target_temp - next_obs.target_temp) > 0.1:
-            action_type = HeatingActionType.SET_TARGET_TEMPERATURE
+        elif current_obs.target_temp != next_obs.target_temp:
+            # Detect temperature changes (increase or decrease)
+            temp_change = next_obs.target_temp - current_obs.target_temp
+            if abs(temp_change) > 0.1:
+                if temp_change > 0:
+                    action_type = HeatingActionType.SET_TARGET_TEMPERATURE_HIGHER
+                else:
+                    action_type = HeatingActionType.SET_TARGET_TEMPERATURE_LOWER
+            else:
+                # Very small change, treat as no-op
+                action_type = HeatingActionType.NO_OP
         else:
             action_type = HeatingActionType.NO_OP
 

@@ -91,8 +91,8 @@ class TestRLActionService:
         assert action.action_type == HeatingActionType.TURN_OFF
         assert action.value == 20.0
 
-    def test_infer_action_set_target_temperature(self, create_observation):
-        """Test action inference when target temperature changes."""
+    def test_infer_action_set_target_temperature_higher(self, create_observation):
+        """Test action inference when target temperature increases."""
         service = RLActionService()
 
         obs1 = create_observation(19.0, 20.0, is_heating_on=True)
@@ -100,8 +100,20 @@ class TestRLActionService:
 
         action = service.infer_action(obs1, obs2)
 
-        assert action.action_type == HeatingActionType.SET_TARGET_TEMPERATURE
+        assert action.action_type == HeatingActionType.SET_TARGET_TEMPERATURE_HIGHER
         assert action.value == 22.0
+
+    def test_infer_action_set_target_temperature_lower(self, create_observation):
+        """Test action inference when target temperature decreases."""
+        service = RLActionService()
+
+        obs1 = create_observation(19.0, 22.0, is_heating_on=True)
+        obs2 = create_observation(19.5, 20.0, is_heating_on=True)
+
+        action = service.infer_action(obs1, obs2)
+
+        assert action.action_type == HeatingActionType.SET_TARGET_TEMPERATURE_LOWER
+        assert action.value == 20.0
 
     def test_infer_action_no_op(self, create_observation):
         """Test action inference when no significant change."""

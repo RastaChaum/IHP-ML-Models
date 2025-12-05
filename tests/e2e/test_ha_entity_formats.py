@@ -69,7 +69,10 @@ class TestClimateEntityFormat:
         successful_extractions = 0
         for record in climate_data[:5]:  # Test first 5 records
             try:
-                heating_state = HeatingState.from_ha_state_record(record)
+                # Use infrastructure adapter's method to extract HeatingState
+                heating_state = ha_reader._extract_heating_state_from_record(
+                    record, target_temp=20.0
+                )
                 
                 # Verify extracted values are valid
                 assert isinstance(heating_state.is_on, bool), "is_on should be boolean"
@@ -177,7 +180,10 @@ class TestSensorEntityFormat:
         successful_extractions = 0
         for record in sensor_data[:5]:
             try:
-                heating_state = HeatingState.from_ha_state_record(record)
+                # Use infrastructure adapter's method to extract HeatingState
+                heating_state = ha_reader._extract_heating_state_from_record(
+                    record, target_temp=20.0
+                )
                 
                 # Verify extracted values
                 assert isinstance(heating_state.is_on, bool), "is_on should be boolean"
