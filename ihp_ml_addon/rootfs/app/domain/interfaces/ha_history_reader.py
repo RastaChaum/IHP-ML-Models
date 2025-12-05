@@ -6,7 +6,7 @@ Contract for reading historical data from Home Assistant.
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from domain.value_objects import TrainingData
+from domain.value_objects import RLExperience, TrainingData, TrainingRequest
 
 
 class IHomeAssistantHistoryReader(ABC):
@@ -44,6 +44,36 @@ class IHomeAssistantHistoryReader(ABC):
 
         Returns:
             TrainingData with extracted heating cycles
+
+        Raises:
+            ConnectionError: If unable to connect to Home Assistant
+            ValueError: If entity IDs are invalid or no data available
+        """
+        pass
+
+    @abstractmethod
+    async def fetch_rl_experiences(
+        self,
+        training_request: TrainingRequest,
+    ) -> list[RLExperience]:
+        """Fetch historical data and convert to RL experiences.
+
+        This method constructs a sequence of RLExperience objects from
+        historical Home Assistant data. Each experience represents a
+        state transition (s, a, r, s', done) in the RL environment.
+
+        The method:
+        1. Fetches history for all entities specified in the training request
+        2. Constructs RLObservation objects for each timestep
+        3. Infers actions taken (based on heating state changes)
+        4. Calculates rewards using the reward calculator
+        5. Returns a list of RLExperience objects
+
+        Args:
+            training_request: Training configuration with entity IDs and time range
+
+        Returns:
+            List of RLExperience objects for training
 
         Raises:
             ConnectionError: If unable to connect to Home Assistant

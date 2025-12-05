@@ -17,7 +17,18 @@ from urllib.parse import urljoin
 
 import requests
 from domain.interfaces import IHomeAssistantHistoryReader
-from domain.value_objects import TrainingData, TrainingDataPoint, get_week_of_month
+from domain.interfaces.reward_calculator import IRewardCalculator
+from domain.value_objects import (
+    EntityState,
+    HeatingActionType,
+    RLAction,
+    RLExperience,
+    RLObservation,
+    TrainingData,
+    TrainingDataPoint,
+    TrainingRequest,
+    get_week_of_month,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +48,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         ha_url: str | None = None,
         ha_token: str | None = None,
         timeout: int = 30,
+        reward_calculator: IRewardCalculator | None = None,
     ) -> None:
         """Initialize the Home Assistant history reader.
 
@@ -44,6 +56,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             ha_url: Home Assistant URL (defaults to supervisor API)
             ha_token: Long-lived access token (defaults to supervisor token)
             timeout: Request timeout in seconds
+            reward_calculator: Optional reward calculator for RL experience construction
         """
         # Default to Supervisor API for addons
         self._ha_url = ha_url or os.getenv(
@@ -51,6 +64,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         )
         self._ha_token = ha_token or os.getenv("SUPERVISOR_TOKEN", "")
         self._timeout = timeout
+        self._reward_calculator = reward_calculator
 
         _LOGGER.info("HA History Reader initialized with URL: %s", self._ha_url)
 
@@ -742,3 +756,586 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     closest_value = value
 
         return closest_value
+
+    async def fetch_rl_experiences(
+        self,
+        training_request: TrainingRequest,
+    ) -> list[RLExperience]:
+        """Fetch historical data and convert to RL experiences.
+
+        This method constructs a sequence of RLExperience objects from
+        historical Home Assistant data. Each experience represents a
+        state transition (s, a, r, s', done) in the RL environment.
+
+        Args:
+            training_request: Training configuration with entity IDs and time range
+
+        Returns:
+            List of RLExperience objects for training
+
+        Raises:
+            ConnectionError: If unable to connect to Home Assistant
+            ValueError: If entity IDs are invalid or no data available
+        """
+        _LOGGER.info(
+            "Fetching RL experiences for device %s from %s to %s",
+            training_request.device_id,
+            training_request.start_time,
+            training_request.end_time,
+        )
+
+        # Validate reward calculator is available
+        if self._reward_calculator is None:
+            raise ValueError(
+                "Reward calculator is required for RL experience construction. "
+                "Please provide a reward_calculator in the constructor."
+            )
+
+        # Build list of entity IDs to fetch
+        entity_ids = [
+            training_request.indoor_temp_entity_id,
+            training_request.target_temp_entity_id,
+            training_request.heating_state_entity_id,
+        ]
+
+        # Add optional entity IDs
+        if training_request.outdoor_temp_entity_id:
+            entity_ids.append(training_request.outdoor_temp_entity_id)
+        if training_request.indoor_humidity_entity_id:
+            entity_ids.append(training_request.indoor_humidity_entity_id)
+        if training_request.window_or_door_open_entity_id:
+            entity_ids.append(training_request.window_or_door_open_entity_id)
+        if training_request.heating_power_entity_id:
+            entity_ids.append(training_request.heating_power_entity_id)
+        if training_request.heating_on_time_entity_id:
+            entity_ids.append(training_request.heating_on_time_entity_id)
+        if training_request.outdoor_temp_forecast_1h_entity_id:
+            entity_ids.append(training_request.outdoor_temp_forecast_1h_entity_id)
+        if training_request.outdoor_temp_forecast_3h_entity_id:
+            entity_ids.append(training_request.outdoor_temp_forecast_3h_entity_id)
+
+        # Fetch history for all entities
+        history_data = await self._fetch_history(
+            entity_ids,
+            training_request.start_time or datetime.now() - timedelta(days=10),
+            training_request.end_time or datetime.now(),
+        )
+
+        # Extract experiences from historical data
+        experiences = self._extract_rl_experiences(
+            history_data,
+            training_request,
+        )
+
+        if not experiences:
+            raise ValueError("No valid RL experiences found in historical data")
+
+        _LOGGER.info(
+            "Extracted %d RL experiences for device %s",
+            len(experiences),
+            training_request.device_id,
+        )
+
+        return experiences
+
+    def _extract_rl_experiences(
+        self,
+        history_data: dict[str, list[dict[str, Any]]],
+        training_request: TrainingRequest,
+    ) -> list[RLExperience]:
+        """Extract RL experiences from historical data.
+
+        This method creates RLExperience objects from historical state changes.
+        It identifies state transitions when:
+        - Heating state changes (on/off)
+        - Significant temperature changes occur (>0.1°C)
+        - Target temperature changes
+
+        For each transition, it:
+        1. Constructs the current state (RLObservation)
+        2. Infers the action taken (from heating state change)
+        3. Constructs the next state (RLObservation)
+        4. Calculates the reward using the reward calculator
+        5. Determines if the episode is done (target reached or timeout)
+
+        Args:
+            history_data: Dictionary of entity_id -> history records
+            training_request: Training configuration
+
+        Returns:
+            List of RLExperience objects
+        """
+        experiences: list[RLExperience] = []
+
+        # Get heating state history to detect transitions
+        heating_states = history_data.get(training_request.heating_state_entity_id, [])
+        if not heating_states:
+            _LOGGER.warning(
+                "No heating state history found for %s",
+                training_request.heating_state_entity_id,
+            )
+            return experiences
+
+        # Sample observations at regular intervals (e.g., every 5 minutes)
+        # This creates a more uniform experience dataset
+        sampling_interval_minutes = 5
+        observations = self._sample_observations(
+            history_data,
+            training_request,
+            sampling_interval_minutes,
+        )
+
+        _LOGGER.debug("Sampled %d observations", len(observations))
+
+        # Create experiences from consecutive observation pairs
+        for i in range(len(observations) - 1):
+            current_obs = observations[i]
+            next_obs = observations[i + 1]
+
+            # Infer action based on heating state transition
+            action = self._infer_action(current_obs, next_obs)
+
+            # Calculate reward for this transition
+            reward = self._reward_calculator.calculate_reward(
+                previous_state=current_obs,
+                action=action,
+                current_state=next_obs,
+            )
+
+            # Determine if episode is done (target reached or significant time passed)
+            done = self._is_episode_done(next_obs, current_obs)
+
+            # Create experience
+            try:
+                experience = RLExperience(
+                    state=current_obs,
+                    action=action,
+                    reward=reward,
+                    next_state=next_obs,
+                    done=done,
+                )
+                experiences.append(experience)
+            except ValueError as e:
+                _LOGGER.debug("Skipping invalid RL experience: %s", e)
+
+        _LOGGER.info("Created %d RL experiences", len(experiences))
+        return experiences
+
+    def _sample_observations(
+        self,
+        history_data: dict[str, list[dict[str, Any]]],
+        training_request: TrainingRequest,
+        interval_minutes: int,
+    ) -> list[RLObservation]:
+        """Sample observations at regular time intervals.
+
+        This creates a uniform dataset of observations for RL training.
+
+        Args:
+            history_data: Dictionary of entity_id -> history records
+            training_request: Training configuration
+            interval_minutes: Sampling interval in minutes
+
+        Returns:
+            List of sampled RLObservation objects
+        """
+        observations: list[RLObservation] = []
+
+        start_time = training_request.start_time or datetime.now() - timedelta(days=10)
+        end_time = training_request.end_time or datetime.now()
+
+        # Ensure timezone-aware datetimes for comparison with HA data
+        import pytz
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=pytz.UTC)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=pytz.UTC)
+
+        current_time = start_time
+        while current_time <= end_time:
+            # Try to construct an observation at this timestamp
+            observation = self._construct_observation_at_time(
+                history_data,
+                training_request,
+                current_time,
+            )
+
+            if observation is not None:
+                observations.append(observation)
+
+            current_time += timedelta(minutes=interval_minutes)
+
+        return observations
+
+    def _construct_observation_at_time(
+        self,
+        history_data: dict[str, list[dict[str, Any]]],
+        training_request: TrainingRequest,
+        timestamp: datetime,
+    ) -> RLObservation | None:
+        """Construct an RLObservation at a specific timestamp.
+
+        Args:
+            history_data: Dictionary of entity_id -> history records
+            training_request: Training configuration
+            timestamp: Target timestamp
+
+        Returns:
+            RLObservation if all required data is available, None otherwise
+        """
+        # Extract indoor temperature (required)
+        indoor_temp = self._get_value_at_time(
+            history_data.get(training_request.indoor_temp_entity_id, []),
+            timestamp,
+        )
+        if indoor_temp is None:
+            return None
+
+        # Extract target temperature (required)
+        target_temp = self._get_value_at_time(
+            history_data.get(training_request.target_temp_entity_id, []),
+            timestamp,
+        )
+        if target_temp is None:
+            return None
+
+        # Extract heating state (required)
+        heating_state_record = self._get_record_at_time(
+            history_data.get(training_request.heating_state_entity_id, []),
+            timestamp,
+        )
+        if heating_state_record is None:
+            return None
+
+        is_heating_on = self._extract_heating_state(heating_state_record)
+
+        # Extract optional fields
+        outdoor_temp = None
+        if training_request.outdoor_temp_entity_id:
+            outdoor_temp = self._get_value_at_time(
+                history_data.get(training_request.outdoor_temp_entity_id, []),
+                timestamp,
+            )
+
+        indoor_humidity = None
+        if training_request.indoor_humidity_entity_id:
+            indoor_humidity = self._get_value_at_time(
+                history_data.get(training_request.indoor_humidity_entity_id, []),
+                timestamp,
+            )
+
+        window_or_door_open = False
+        if training_request.window_or_door_open_entity_id:
+            window_value = self._get_value_at_time(
+                history_data.get(training_request.window_or_door_open_entity_id, []),
+                timestamp,
+            )
+            window_or_door_open = window_value is not None and window_value > 0
+
+        heating_output_percent = None
+        if training_request.heating_power_entity_id:
+            heating_output_percent = self._get_value_at_time(
+                history_data.get(training_request.heating_power_entity_id, []),
+                timestamp,
+            )
+
+        energy_consumption_recent_kwh = None
+        if training_request.heating_power_entity_id:
+            energy_consumption_recent_kwh = self._get_value_at_time(
+                history_data.get(training_request.heating_power_entity_id, []),
+                timestamp,
+            )
+
+        time_heating_on_recent_seconds = None
+        if training_request.heating_on_time_entity_id:
+            time_heating_on_recent_seconds_float = self._get_value_at_time(
+                history_data.get(training_request.heating_on_time_entity_id, []),
+                timestamp,
+            )
+            if time_heating_on_recent_seconds_float is not None:
+                time_heating_on_recent_seconds = int(time_heating_on_recent_seconds_float)
+
+        outdoor_temp_forecast_1h = None
+        if training_request.outdoor_temp_forecast_1h_entity_id:
+            outdoor_temp_forecast_1h = self._get_value_at_time(
+                history_data.get(training_request.outdoor_temp_forecast_1h_entity_id, []),
+                timestamp,
+            )
+
+        outdoor_temp_forecast_3h = None
+        if training_request.outdoor_temp_forecast_3h_entity_id:
+            outdoor_temp_forecast_3h = self._get_value_at_time(
+                history_data.get(training_request.outdoor_temp_forecast_3h_entity_id, []),
+                timestamp,
+            )
+
+        # Calculate temperature trends (15-minute changes)
+        indoor_temp_change_15min = self._calculate_temp_change(
+            history_data.get(training_request.indoor_temp_entity_id, []),
+            timestamp,
+            15,
+        )
+
+        outdoor_temp_change_15min = None
+        if training_request.outdoor_temp_entity_id:
+            outdoor_temp_change_15min = self._calculate_temp_change(
+                history_data.get(training_request.outdoor_temp_entity_id, []),
+                timestamp,
+                15,
+            )
+
+        # Create entity states
+        indoor_temp_entity = EntityState(
+            entity_id=training_request.indoor_temp_entity_id,
+            last_changed_minutes=0.0,  # Simplified for now
+        )
+
+        target_temp_entity = EntityState(
+            entity_id=training_request.target_temp_entity_id,
+            last_changed_minutes=0.0,
+        )
+
+        outdoor_temp_entity = None
+        if training_request.outdoor_temp_entity_id:
+            outdoor_temp_entity = EntityState(
+                entity_id=training_request.outdoor_temp_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        indoor_humidity_entity = None
+        if training_request.indoor_humidity_entity_id:
+            indoor_humidity_entity = EntityState(
+                entity_id=training_request.indoor_humidity_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        window_or_door_entity = None
+        if training_request.window_or_door_open_entity_id:
+            window_or_door_entity = EntityState(
+                entity_id=training_request.window_or_door_open_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        heating_output_entity = None
+        if training_request.heating_power_entity_id:
+            heating_output_entity = EntityState(
+                entity_id=training_request.heating_power_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        energy_consumption_entity = None
+        if training_request.heating_power_entity_id:
+            energy_consumption_entity = EntityState(
+                entity_id=training_request.heating_power_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        time_heating_on_entity = None
+        if training_request.heating_on_time_entity_id:
+            time_heating_on_entity = EntityState(
+                entity_id=training_request.heating_on_time_entity_id,
+                last_changed_minutes=0.0,
+            )
+
+        # Temporal context
+        day_of_week = timestamp.weekday()
+        hour_of_day = timestamp.hour
+
+        # Simplified time_until_target_minutes (in real scenario, would come from scheduler)
+        # For historical data, we assume target should be reached "now"
+        time_until_target_minutes = 0
+
+        # Calculate target achievement percentage
+        temp_diff = abs(indoor_temp - target_temp)
+        max_expected_diff = 5.0  # Maximum expected temperature difference
+        current_target_achieved_percentage = max(
+            0.0, min(100.0, 100.0 * (1.0 - temp_diff / max_expected_diff))
+        )
+
+        try:
+            observation = RLObservation(
+                indoor_temp=indoor_temp,
+                indoor_temp_entity=indoor_temp_entity,
+                outdoor_temp=outdoor_temp,
+                outdoor_temp_entity=outdoor_temp_entity,
+                indoor_humidity=indoor_humidity,
+                indoor_humidity_entity=indoor_humidity_entity,
+                timestamp=timestamp,
+                target_temp=target_temp,
+                target_temp_entity=target_temp_entity,
+                time_until_target_minutes=time_until_target_minutes,
+                current_target_achieved_percentage=current_target_achieved_percentage,
+                is_heating_on=is_heating_on,
+                heating_output_percent=heating_output_percent,
+                heating_output_entity=heating_output_entity,
+                energy_consumption_recent_kwh=energy_consumption_recent_kwh,
+                energy_consumption_entity=energy_consumption_entity,
+                time_heating_on_recent_seconds=time_heating_on_recent_seconds,
+                time_heating_on_entity=time_heating_on_entity,
+                indoor_temp_change_15min=indoor_temp_change_15min,
+                outdoor_temp_change_15min=outdoor_temp_change_15min,
+                day_of_week=day_of_week,
+                hour_of_day=hour_of_day,
+                outdoor_temp_forecast_1h=outdoor_temp_forecast_1h,
+                outdoor_temp_forecast_3h=outdoor_temp_forecast_3h,
+                window_or_door_open=window_or_door_open,
+                window_or_door_entity=window_or_door_entity,
+                device_id=training_request.device_id,
+            )
+            return observation
+        except ValueError as e:
+            _LOGGER.debug("Failed to construct observation at %s: %s", timestamp, e)
+            return None
+
+    def _get_record_at_time(
+        self,
+        history: list[dict[str, Any]],
+        target_time: datetime,
+    ) -> dict[str, Any] | None:
+        """Get the history record at or before a specific time.
+
+        Args:
+            history: List of history records for the entity
+            target_time: Time to find the record for
+
+        Returns:
+            The history record, or None if not found
+        """
+        closest_record: dict[str, Any] | None = None
+        closest_time: datetime | None = None
+
+        for record in history:
+            timestamp_str = record.get("last_changed") or record.get("last_updated")
+            if not timestamp_str:
+                continue
+
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            # Find the closest record at or before target_time
+            if timestamp <= target_time:
+                if closest_time is None or timestamp > closest_time:
+                    closest_time = timestamp
+                    closest_record = record
+
+        return closest_record
+
+    def _extract_heating_state(self, state_record: dict[str, Any]) -> bool:
+        """Extract heating on/off state from a history record.
+
+        Args:
+            state_record: History record for heating state entity
+
+        Returns:
+            True if heating is on, False otherwise
+        """
+        # Check if entity is a climate entity
+        entity_id = state_record.get("entity_id", "")
+        is_climate = entity_id.startswith("climate.")
+
+        if is_climate:
+            attributes = state_record.get("attributes", {})
+            hvac_action = attributes.get("hvac_action", "")
+            hvac_mode = attributes.get("hvac_mode", "")
+            state = state_record.get("state", "")
+
+            # Heating is ON if hvac_action is 'heating' OR state is 'heat'/'heating'
+            return (
+                (hvac_action and hvac_action.lower() in ("heating", "on"))
+                or (state and state.lower() in ("heat", "heating"))
+                or (hvac_mode and hvac_mode.lower() == "heat")
+            )
+        else:
+            # For binary_sensor or switch: check state
+            state = state_record.get("state", "").lower()
+            return state in ("on", "heat", "heating", "true", "1")
+
+    def _calculate_temp_change(
+        self,
+        history: list[dict[str, Any]],
+        target_time: datetime,
+        minutes_back: int,
+    ) -> float | None:
+        """Calculate temperature change over a time period.
+
+        Args:
+            history: List of history records for the entity
+            target_time: Current time
+            minutes_back: How many minutes back to compare
+
+        Returns:
+            Temperature change in °C, or None if not enough data
+        """
+        current_temp = self._get_value_at_time(history, target_time)
+        past_time = target_time - timedelta(minutes=minutes_back)
+        past_temp = self._get_value_at_time(history, past_time)
+
+        if current_temp is not None and past_temp is not None:
+            return current_temp - past_temp
+
+        return None
+
+    def _infer_action(
+        self,
+        current_obs: RLObservation,
+        next_obs: RLObservation,
+    ) -> RLAction:
+        """Infer the action taken between two observations.
+
+        Args:
+            current_obs: Current observation
+            next_obs: Next observation
+
+        Returns:
+            Inferred RLAction
+        """
+        # Infer action based on heating state transition
+        if not current_obs.is_heating_on and next_obs.is_heating_on:
+            action_type = HeatingActionType.TURN_ON
+        elif current_obs.is_heating_on and not next_obs.is_heating_on:
+            action_type = HeatingActionType.TURN_OFF
+        elif abs(current_obs.target_temp - next_obs.target_temp) > 0.1:
+            action_type = HeatingActionType.SET_TARGET_TEMPERATURE
+        else:
+            action_type = HeatingActionType.NO_OP
+
+        # Use the target temperature from the next state as the action value
+        return RLAction(
+            action_type=action_type,
+            value=next_obs.target_temp,
+            decision_timestamp=next_obs.timestamp,
+            confidence_score=None,
+        )
+
+    def _is_episode_done(
+        self,
+        current_obs: RLObservation,
+        previous_obs: RLObservation,
+    ) -> bool:
+        """Determine if an episode should end.
+
+        An episode ends when:
+        - Target temperature is reached (within tolerance)
+        - Significant time has passed since target change
+        - Target temperature changes significantly
+
+        Args:
+            current_obs: Current observation
+            previous_obs: Previous observation
+
+        Returns:
+            True if episode should end, False otherwise
+        """
+        # Episode ends if target temperature changed significantly
+        if abs(current_obs.target_temp - previous_obs.target_temp) > 0.5:
+            return True
+
+        # Episode ends if target is achieved
+        temp_diff = abs(current_obs.indoor_temp - current_obs.target_temp)
+        if temp_diff <= 0.3:  # Within 0.3°C tolerance
+            return True
+
+        # Episode continues by default
+        return False

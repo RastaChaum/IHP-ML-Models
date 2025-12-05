@@ -349,3 +349,505 @@ class TestCycleSplitting:
         # Should create 1 data point (45 minutes < 60 minutes, no split)
         assert len(data_points) == 1
         assert data_points[0].heating_duration_minutes == 45.0
+
+
+class TestRLExperienceExtraction:
+    """Tests for RL experience extraction from historical data."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_rl_experiences_requires_reward_calculator(self):
+        """Test that fetch_rl_experiences raises error without reward calculator."""
+        from domain.value_objects import TrainingRequest
+        from datetime import datetime, timedelta
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+            reward_calculator=None,  # No reward calculator
+        )
+
+        training_request = TrainingRequest(
+            device_id="zone.living_room",
+            indoor_temp_entity_id="sensor.indoor_temp",
+            target_temp_entity_id="sensor.target_temp",
+            heating_state_entity_id="binary_sensor.heating",
+            start_time=datetime.now() - timedelta(days=1),
+            end_time=datetime.now(),
+        )
+
+        with pytest.raises(ValueError, match="Reward calculator is required"):
+            await reader.fetch_rl_experiences(training_request)
+
+    @pytest.mark.asyncio
+    async def test_fetch_rl_experiences_with_minimal_data(self):
+        """Test RL experience extraction with minimal required data."""
+        from domain.value_objects import TrainingRequest, RewardConfig
+        from domain.services import HeatingRewardCalculator
+        from datetime import datetime, timedelta, timezone
+
+        # Create a mock reward calculator
+        reward_calculator = HeatingRewardCalculator(config=RewardConfig())
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+            reward_calculator=reward_calculator,
+        )
+
+        training_request = TrainingRequest(
+            device_id="zone.living_room",
+            indoor_temp_entity_id="sensor.indoor_temp",
+            target_temp_entity_id="sensor.target_temp",
+            heating_state_entity_id="binary_sensor.heating",
+            start_time=datetime(2024, 11, 25, 8, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 11, 25, 9, 0, 0, tzinfo=timezone.utc),
+        )
+
+        # Mock history data with heating cycle
+        mock_history_data = {
+            "sensor.indoor_temp": [
+                {
+                    "last_changed": "2024-11-25T08:00:00+00:00",
+                    "state": "18.0",
+                },
+                {
+                    "last_changed": "2024-11-25T08:15:00+00:00",
+                    "state": "18.5",
+                },
+                {
+                    "last_changed": "2024-11-25T08:30:00+00:00",
+                    "state": "19.0",
+                },
+                {
+                    "last_changed": "2024-11-25T08:45:00+00:00",
+                    "state": "19.5",
+                },
+                {
+                    "last_changed": "2024-11-25T09:00:00+00:00",
+                    "state": "20.0",
+                },
+            ],
+            "sensor.target_temp": [
+                {
+                    "last_changed": "2024-11-25T08:00:00+00:00",
+                    "state": "20.0",
+                },
+            ],
+            "binary_sensor.heating": [
+                {
+                    "last_changed": "2024-11-25T08:00:00+00:00",
+                    "state": "on",
+                },
+                {
+                    "last_changed": "2024-11-25T08:45:00+00:00",
+                    "state": "off",
+                },
+            ],
+        }
+
+        # Mock the _fetch_history method
+        with patch.object(reader, '_fetch_history', return_value=mock_history_data):
+            experiences = await reader.fetch_rl_experiences(training_request)
+
+            # Should have created some experiences
+            assert len(experiences) > 0
+
+            # Verify experience structure
+            exp = experiences[0]
+            assert exp.state is not None
+            assert exp.action is not None
+            assert exp.next_state is not None
+            assert isinstance(exp.reward, float)
+            assert isinstance(exp.done, bool)
+
+            # Verify state and next_state are for the same device
+            assert exp.state.device_id == exp.next_state.device_id == training_request.device_id
+
+    @pytest.mark.asyncio
+    async def test_construct_observation_with_all_fields(self):
+        """Test observation construction with all optional fields."""
+        from domain.value_objects import TrainingRequest
+        from datetime import datetime, timezone
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        training_request = TrainingRequest(
+            device_id="zone.living_room",
+            indoor_temp_entity_id="sensor.indoor_temp",
+            target_temp_entity_id="sensor.target_temp",
+            heating_state_entity_id="binary_sensor.heating",
+            outdoor_temp_entity_id="sensor.outdoor_temp",
+            indoor_humidity_entity_id="sensor.humidity",
+            window_or_door_open_entity_id="binary_sensor.window",
+            heating_power_entity_id="sensor.heating_power",
+            heating_on_time_entity_id="sensor.heating_on_time",
+            outdoor_temp_forecast_1h_entity_id="sensor.forecast_1h",
+            outdoor_temp_forecast_3h_entity_id="sensor.forecast_3h",
+        )
+
+        mock_history_data = {
+            "sensor.indoor_temp": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "19.0"},
+            ],
+            "sensor.target_temp": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "21.0"},
+            ],
+            "binary_sensor.heating": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "on"},
+            ],
+            "sensor.outdoor_temp": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "5.0"},
+            ],
+            "sensor.humidity": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "45.0"},
+            ],
+            "binary_sensor.window": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "off"},
+            ],
+            "sensor.heating_power": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "0.5"},
+            ],
+            "sensor.heating_on_time": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "300"},
+            ],
+            "sensor.forecast_1h": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "4.5"},
+            ],
+            "sensor.forecast_3h": [
+                {"last_changed": "2024-11-25T08:00:00+00:00", "state": "4.0"},
+            ],
+        }
+
+        timestamp = datetime(2024, 11, 25, 8, 0, 0, tzinfo=timezone.utc)
+
+        observation = reader._construct_observation_at_time(
+            mock_history_data,
+            training_request,
+            timestamp,
+        )
+
+        assert observation is not None
+        assert observation.indoor_temp == 19.0
+        assert observation.target_temp == 21.0
+        assert observation.is_heating_on is True
+        assert observation.outdoor_temp == 5.0
+        assert observation.indoor_humidity == 45.0
+        assert observation.window_or_door_open is False
+        assert observation.heating_output_percent == 0.5
+        assert observation.energy_consumption_recent_kwh == 0.5
+        assert observation.time_heating_on_recent_seconds == 300
+        assert observation.outdoor_temp_forecast_1h == 4.5
+        assert observation.outdoor_temp_forecast_3h == 4.0
+        assert observation.device_id == "zone.living_room"
+
+    def test_infer_action_turn_on(self):
+        """Test action inference when heating turns on."""
+        from domain.value_objects import EntityState, RLObservation
+        from domain.value_objects.rl_types import HeatingActionType
+        from datetime import datetime
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        # Create observations with heating off, then on
+        entity = EntityState(entity_id="sensor.test", last_changed_minutes=0.0)
+        timestamp = datetime(2024, 11, 25, 8, 0, 0)
+
+        obs1 = RLObservation(
+            indoor_temp=18.0,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=50.0,
+            is_heating_on=False,
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        obs2 = RLObservation(
+            indoor_temp=18.5,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=60.0,
+            is_heating_on=True,  # Heating turned on
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        action = reader._infer_action(obs1, obs2)
+        assert action.action_type == HeatingActionType.TURN_ON
+        assert action.value == 20.0
+
+    def test_infer_action_turn_off(self):
+        """Test action inference when heating turns off."""
+        from domain.value_objects import EntityState, RLObservation
+        from domain.value_objects.rl_types import HeatingActionType
+        from datetime import datetime
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        entity = EntityState(entity_id="sensor.test", last_changed_minutes=0.0)
+        timestamp = datetime(2024, 11, 25, 8, 0, 0)
+
+        obs1 = RLObservation(
+            indoor_temp=19.5,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=90.0,
+            is_heating_on=True,  # Heating on
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        obs2 = RLObservation(
+            indoor_temp=20.0,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=100.0,
+            is_heating_on=False,  # Heating turned off
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        action = reader._infer_action(obs1, obs2)
+        assert action.action_type == HeatingActionType.TURN_OFF
+        assert action.value == 20.0
+
+    def test_is_episode_done_target_reached(self):
+        """Test episode done when target temperature is reached."""
+        from domain.value_objects import EntityState, RLObservation
+        from datetime import datetime
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        entity = EntityState(entity_id="sensor.test", last_changed_minutes=0.0)
+        timestamp = datetime(2024, 11, 25, 8, 0, 0)
+
+        obs1 = RLObservation(
+            indoor_temp=19.5,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=90.0,
+            is_heating_on=True,
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        obs2 = RLObservation(
+            indoor_temp=20.0,  # Target reached
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=100.0,
+            is_heating_on=False,
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        done = reader._is_episode_done(obs2, obs1)
+        assert done is True  # Episode should end when target is reached
+
+    def test_is_episode_done_target_changed(self):
+        """Test episode done when target temperature changes significantly."""
+        from domain.value_objects import EntityState, RLObservation
+        from datetime import datetime
+
+        reader = HomeAssistantHistoryReader(
+            ha_url='http://test',
+            ha_token='test_token',
+        )
+
+        entity = EntityState(entity_id="sensor.test", last_changed_minutes=0.0)
+        timestamp = datetime(2024, 11, 25, 8, 0, 0)
+
+        obs1 = RLObservation(
+            indoor_temp=19.0,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=20.0,
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=80.0,
+            is_heating_on=True,
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        obs2 = RLObservation(
+            indoor_temp=19.5,
+            indoor_temp_entity=entity,
+            outdoor_temp=5.0,
+            outdoor_temp_entity=entity,
+            indoor_humidity=50.0,
+            indoor_humidity_entity=entity,
+            timestamp=timestamp,
+            target_temp=22.0,  # Target changed significantly
+            target_temp_entity=entity,
+            time_until_target_minutes=0,
+            current_target_achieved_percentage=70.0,
+            is_heating_on=True,
+            heating_output_percent=None,
+            heating_output_entity=None,
+            energy_consumption_recent_kwh=None,
+            energy_consumption_entity=None,
+            time_heating_on_recent_seconds=None,
+            time_heating_on_entity=None,
+            indoor_temp_change_15min=None,
+            outdoor_temp_change_15min=None,
+            day_of_week=0,
+            hour_of_day=8,
+            outdoor_temp_forecast_1h=None,
+            outdoor_temp_forecast_3h=None,
+            window_or_door_open=False,
+            window_or_door_entity=None,
+            device_id="zone.test",
+        )
+
+        done = reader._is_episode_done(obs2, obs1)
+        assert done is True  # Episode should end when target changes significantly
