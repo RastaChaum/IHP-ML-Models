@@ -17,6 +17,8 @@ class PredictionResult:
         model_id: Identifier of the model used for prediction
         timestamp: When the prediction was made
         reasoning: Human-readable explanation of the prediction
+        feature_mismatch: True if expected adjacent room features were missing
+        missing_features: List of feature names that were missing (if any)
     """
 
     predicted_duration_minutes: float
@@ -24,6 +26,8 @@ class PredictionResult:
     model_id: str
     timestamp: datetime
     reasoning: str
+    feature_mismatch: bool = False
+    missing_features: list[str] | None = None
 
     def __post_init__(self) -> None:
         """Validate prediction result values."""

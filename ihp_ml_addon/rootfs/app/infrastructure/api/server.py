@@ -47,6 +47,7 @@ app = Flask(__name__)
 # Initialize services
 model_path = Path(os.getenv("MODEL_PERSISTENCE_PATH", "/data/models"))
 storage = FileModelStorage(model_path)
+
 trainer = XGBoostTrainer(storage)
 predictor = XGBoostPredictor(storage)
 
@@ -129,7 +130,18 @@ async def train_model() -> Response:
                 # "week_of_month": int,
                 # "month": int,
                 "heating_duration_minutes": float,
-                "timestamp": str (ISO format)
+                "minutes_since_last_cycle": float (optional),
+                "timestamp": str (ISO format),
+                "adjacent_rooms": dict (optional - multi-room features)
+                    Format: {
+                        "zone_id": {
+                            "current_temp": float,
+                            "current_humidity": float,
+                            "next_target_temp": float,
+                            "duration_until_change": float (minutes)
+                        },
+                        ...
+                    }
             },
             ...
         ]
@@ -175,6 +187,7 @@ async def train_model() -> Response:
                 heating_duration_minutes=float(dp["heating_duration_minutes"]),
                 minutes_since_last_cycle=float(dp.get("minutes_since_last_cycle", 0.0)),
                 timestamp=timestamp,
+                adjacent_rooms=dp.get("adjacent_rooms"),
             ))
 
         training_data = TrainingData.from_sequence(data_points)
@@ -250,7 +263,16 @@ async def train_with_device_config() -> Response:
         "history_days": int (optional, default: 30),
         "cycle_split_duration_minutes": int (optional) - if set, splits long
             heating cycles into smaller sub-cycles of this duration (in minutes)
-            for more training data. Must be between 10 and 300 if set.
+            for more training data. Must be between 10 and 300 if set.,
+        "adjacent_rooms": dict (optional) - adjacent room sensor entity IDs
+            Format: {
+                "zone_id": {
+                    "temp_entity_id": str,
+                    "humidity_entity_id": str (optional),
+                    "target_temp_entity_id": str
+                },
+                ...
+            }
     }
     """
     try:
@@ -296,6 +318,7 @@ async def train_with_device_config() -> Response:
                 humidity_entity_id=data.get("humidity_entity_id"),
                 history_days=history_days,
                 cycle_split_duration_minutes=cycle_split_duration_minutes,
+                adjacent_rooms=data.get("adjacent_rooms"),
             )
         except ValueError as e:
             return jsonify({"error": f"Invalid device configuration: {e}"}), 400
@@ -340,7 +363,17 @@ async def predict() -> Response:
         # "month": int,
         "minutes_since_last_cycle": float (optional - time since last heating cycle),
         "device_id": str (optional - for device-specific model selection),
-        "model_id": str (optional - for specific model selection)
+        "model_id": str (optional - for specific model selection),
+        "adjacent_rooms": dict (optional - adjacent room data for multi-room features)
+            Format: {
+                "zone_id": {
+                    "current_temp": float,
+                    "current_humidity": float,
+                    "next_target_temp": float,
+                    "duration_until_change": float (minutes)
+                },
+                ...
+            }
     }
     """
     try:
@@ -366,18 +399,27 @@ async def predict() -> Response:
             minutes_since_last_cycle=float(data["minutes_since_last_cycle"]) if "minutes_since_last_cycle" in data else None,
             device_id=data.get("device_id"),
             model_id=data.get("model_id"),
+            adjacent_rooms=data.get("adjacent_rooms"),
         )
 
         result = await ml_service.predict(prediction_request)
 
-        return jsonify({
+        response_data = {
             "success": True,
             "predicted_duration_minutes": result.predicted_duration_minutes,
             "confidence": result.confidence,
             "model_id": result.model_id,
             "timestamp": result.timestamp.isoformat(),
             "reasoning": result.reasoning,
-        })
+        }
+
+        # If there's a feature mismatch, include warning information and return 206
+        if result.feature_mismatch:
+            response_data["warning"] = "Model expects adjacent room features but some are missing"
+            response_data["missing_features"] = result.missing_features
+            return jsonify(response_data), 206  # 206 Partial Content
+
+        return jsonify(response_data)
 
     except KeyError as e:
         return jsonify({"error": f"Missing required field: {e}"}), 400

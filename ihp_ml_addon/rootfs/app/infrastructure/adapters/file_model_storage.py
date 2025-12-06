@@ -37,6 +37,7 @@ class FileModelStorage(IModelStorage):
 
     MODEL_FILE_SUFFIX = ".pkl"
     METADATA_FILE_SUFFIX = ".json"
+    FEATURES_FILE_SUFFIX = "_features.json"
     INDEX_FILE_NAME = "models_index.json"
 
     def __init__(self, base_path: str | Path) -> None:
@@ -84,6 +85,17 @@ class FileModelStorage(IModelStorage):
             }
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
+
+            # Save feature contract (separate file for easy access during inference)
+            features_path = self._base_path / f"{model_id}{self.FEATURES_FILE_SUFFIX}"
+            features_contract = {
+                "model_id": info.model_id,
+                "device_id": info.device_id,
+                "feature_names": list(info.feature_names),
+                "created_at": info.created_at.isoformat(),
+            }
+            with open(features_path, "w") as f:
+                json.dump(features_contract, f, indent=2)
 
             # Update index
             await self._update_index(model_id, info.created_at, info.device_id)
@@ -211,6 +223,41 @@ class FileModelStorage(IModelStorage):
         all_models = await self.list_models()
         return [m for m in all_models if m.device_id == device_id]
 
+    async def load_feature_contract(self, model_id: str) -> tuple[str, ...]:
+        """Load only the feature contract for a model without loading the model itself.
+
+        Args:
+            model_id: Identifier of the model
+
+        Returns:
+            Tuple of feature names
+
+        Raises:
+            ModelNotFoundError: If the model or feature contract is not found
+            StorageError: If loading fails
+        """
+        features_path = self._base_path / f"{model_id}{self.FEATURES_FILE_SUFFIX}"
+        
+        if not features_path.exists():
+            # Fallback to loading from metadata if features file doesn't exist
+            metadata_path = self._base_path / f"{model_id}{self.METADATA_FILE_SUFFIX}"
+            if not metadata_path.exists():
+                raise ModelNotFoundError(f"Model not found: {model_id}")
+            
+            try:
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+                return tuple(metadata["feature_names"])
+            except (OSError, json.JSONDecodeError, KeyError) as e:
+                raise StorageError(f"Failed to load feature contract for {model_id}: {e}") from e
+        
+        try:
+            with open(features_path) as f:
+                features_data = json.load(f)
+            return tuple(features_data["feature_names"])
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            raise StorageError(f"Failed to load feature contract for {model_id}: {e}") from e
+
     async def delete_model(self, model_id: str) -> None:
         """Delete a model from file storage.
 
@@ -219,6 +266,7 @@ class FileModelStorage(IModelStorage):
         """
         model_path = self._base_path / f"{model_id}{self.MODEL_FILE_SUFFIX}"
         metadata_path = self._base_path / f"{model_id}{self.METADATA_FILE_SUFFIX}"
+        features_path = self._base_path / f"{model_id}{self.FEATURES_FILE_SUFFIX}"
 
         if not model_path.exists():
             raise ModelNotFoundError(f"Model not found: {model_id}")
@@ -227,6 +275,8 @@ class FileModelStorage(IModelStorage):
             os.remove(model_path)
             if metadata_path.exists():
                 os.remove(metadata_path)
+            if features_path.exists():
+                os.remove(features_path)
 
             # Update index
             await self._remove_from_index(model_id)

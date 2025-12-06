@@ -1,7 +1,7 @@
 curl -X POST http://localhost:5000/api/v1/train/device \
   -H "Content-Type: application/json" \
   -d '{
-    "device_id": "sensor.ihp_salle_anticipated_start_time_hms",
+    "device_id": "climate.thermostat_salle",
     "indoor_temp_entity_id": "sensor.capteur_tdeg_hdeg_salle_temperature",
     "outdoor_temp_entity_id": "sensor.openweathermap_temperature",
     "target_temp_entity_id": "climate.thermostat_salle",
@@ -41,14 +41,21 @@ curl -X POST http://localhost:5000/api/v1/train/device \
 curl -X POST http://localhost:5000/api/v1/train/device \
   -H "Content-Type: application/json" \
   -d '{
-    "device_id": "sensor.ihp_maxence_anticipated_start_time_hms",
+    "device_id": "climate.thermostat_maxence",
     "indoor_temp_entity_id": "sensor.capteur_tdeg_hdeg_maxence_temperature",
     "outdoor_temp_entity_id": "sensor.openweathermap_temperature",
     "target_temp_entity_id": "climate.thermostat_maxence",
     "heating_state_entity_id": "climate.thermostat_maxence",
     "humidity_entity_id": "sensor.capteur_tdeg_hdeg_maxence_humidity",
     "history_days": 60,
-    "cycle_split_duration_minutes": 15
+    "cycle_split_duration_minutes": 25,
+    "adjacent_rooms": {
+      "mezzanine": {
+        "temp_entity_id": "sensor.capteur_tdeg_hdeg_mezzanine_temperature",
+        "humidity_entity_id": "sensor.capteur_tdeg_hdeg_mezzanine_humidity",
+        "target_temp_entity_id": "climate.thermostat_mezzanine"
+      }
+    }
   }'
 
 curl -X POST http://localhost:5000/api/v1/train/device \

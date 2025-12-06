@@ -90,6 +90,22 @@ class IModelStorage(ABC):
         pass
 
     @abstractmethod
+    async def load_feature_contract(self, model_id: str) -> tuple[str, ...]:
+        """Load only the feature contract for a model.
+
+        Args:
+            model_id: Identifier of the model
+
+        Returns:
+            Tuple of feature names
+
+        Raises:
+            ModelNotFoundError: If model doesn't exist
+            StorageError: If loading fails
+        """
+        pass
+
+    @abstractmethod
     async def delete_model(self, model_id: str) -> None:
         """Delete a model from storage.
 
