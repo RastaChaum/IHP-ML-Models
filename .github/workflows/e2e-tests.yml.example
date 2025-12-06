@@ -1,0 +1,43 @@
+# Example GitHub Actions workflow for running e2e tests
+# Rename to e2e-tests.yml and configure secrets to enable
+
+name: E2E Tests with Home Assistant
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      ha_url:
+        description: 'Home Assistant URL'
+        required: true
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-asyncio
+          pip install numpy scikit-learn xgboost flask requests pydantic
+      
+      - name: Run E2E tests
+        env:
+          HA_URL: ${{ github.event.inputs.ha_url }}
+          HA_TOKEN: ${{ secrets.HA_TOKEN }}  # Store token in GitHub secrets
+          # Configure your entity IDs here
+          HA_INDOOR_TEMP_ENTITY: sensor.indoor_temperature
+          HA_OUTDOOR_TEMP_ENTITY: sensor.outdoor_temperature
+          HA_TARGET_TEMP_ENTITY: climate.thermostat
+          HA_HEATING_STATE_ENTITY: climate.thermostat
+          HA_CLIMATE_ENTITY: climate.thermostat
+          HA_TEMP_SENSOR_ENTITY: sensor.indoor_temperature
+          HA_BINARY_SENSOR_HEATING: binary_sensor.heating
+        run: |
+          pytest tests/e2e/ -v -m e2e --tb=short

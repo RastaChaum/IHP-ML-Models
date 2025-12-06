@@ -14,13 +14,17 @@ class HeatingActionType(str, Enum):
     Attributes:
         TURN_ON: Turn heating on
         TURN_OFF: Turn heating off
-        SET_TARGET_TEMPERATURE: Set a specific target temperature
+        SET_TARGET_TEMPERATURE_HIGHER: Increase target temperature setpoint
+        SET_TARGET_TEMPERATURE_LOWER: Decrease target temperature setpoint
+        SET_TARGET_TEMPERATURE: Set a specific target temperature (deprecated, use HIGHER/LOWER)
         NO_OP: No operation (maintain current state)
     """
 
     TURN_ON = "turn_on"
     TURN_OFF = "turn_off"
-    SET_TARGET_TEMPERATURE = "set_target_temperature"
+    SET_TARGET_TEMPERATURE_HIGHER = "set_target_temperature_higher"
+    SET_TARGET_TEMPERATURE_LOWER = "set_target_temperature_lower"
+    SET_TARGET_TEMPERATURE = "set_target_temperature"  # Kept for backward compatibility
     NO_OP = "no_op"
 
 
