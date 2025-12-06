@@ -70,12 +70,13 @@ class StableBaselines3RLPredictor(IRLModelPredictor):
         # Get model ID if not provided
         if model_id is None:
             # Load latest model for this device
-            # This would require a method in IModelStorage to get latest model
-            # For now, we'll raise an error
-            raise ValueError(
-                "model_id must be provided. "
-                "TODO: Implement get_latest_model_for_device in IModelStorage"
+            model_id = await self._model_storage.get_latest_model_id_for_device(
+                observation.device_id
             )
+            if model_id is None:
+                raise ValueError(
+                    f"No trained model found for device {observation.device_id}"
+                )
 
         # Load model if not already cached
         if model_id not in self._loaded_models:
@@ -158,10 +159,14 @@ class StableBaselines3RLPredictor(IRLModelPredictor):
         """
         # Get model ID if not provided
         if model_id is None:
-            raise ValueError(
-                "model_id must be provided. "
-                "TODO: Implement get_latest_model_for_device in IModelStorage"
+            # Load latest model for this device
+            model_id = await self._model_storage.get_latest_model_id_for_device(
+                observation.device_id
             )
+            if model_id is None:
+                raise ValueError(
+                    f"No trained model found for device {observation.device_id}"
+                )
 
         # Load model if not already cached
         if model_id not in self._loaded_models:

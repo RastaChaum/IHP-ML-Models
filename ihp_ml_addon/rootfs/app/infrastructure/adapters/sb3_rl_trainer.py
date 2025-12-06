@@ -34,17 +34,16 @@ class TrainingProgressCallback(BaseCallback):
         # Check if an episode ended
         if self.locals.get("dones") is not None:
             for i, done in enumerate(self.locals["dones"]):
-                if done:
-                    if "episode" in self.locals["infos"][i]:
-                        episode_reward = self.locals["infos"][i]["episode"]["r"]
-                        episode_length = self.locals["infos"][i]["episode"]["l"]
-                        self.episode_rewards.append(episode_reward)
-                        self.episode_lengths.append(episode_length)
-                        _LOGGER.info(
-                            "Episode finished: reward=%.2f, length=%d",
-                            episode_reward,
-                            episode_length,
-                        )
+                if done and "episode" in self.locals["infos"][i]:
+                    episode_reward = self.locals["infos"][i]["episode"]["r"]
+                    episode_length = self.locals["infos"][i]["episode"]["l"]
+                    self.episode_rewards.append(episode_reward)
+                    self.episode_lengths.append(episode_length)
+                    _LOGGER.info(
+                        "Episode finished: reward=%.2f, length=%d",
+                        episode_reward,
+                        episode_length,
+                    )
         return True
 
 
@@ -80,6 +79,17 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
             "Initialized StableBaselines3RLTrainer with models_dir=%s",
             self._models_dir,
         )
+
+    def _generate_model_id(self, device_id: str) -> str:
+        """Generate a unique model ID for a device.
+
+        Args:
+            device_id: Device/zone identifier
+
+        Returns:
+            Unique model identifier with timestamp
+        """
+        return f"{device_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     async def train_from_experiences(
         self,
@@ -152,7 +162,7 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
         _LOGGER.info("Training completed successfully")
 
         # Save the model
-        model_id = f"{device_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        model_id = self._generate_model_id(device_id)
         model_path = self._models_dir / f"{model_id}.zip"
         model.save(str(model_path))
 
@@ -350,15 +360,73 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
         model_info = await self._model_storage.load_model_info(model_id)
         device_id = model_info.device_id
 
-        # Delete old model file
-        model_path = self._models_dir / f"{model_id}.zip"
-        if model_path.exists():
-            os.remove(model_path)
-            _LOGGER.info("Deleted old model file: %s", model_path)
+        if not experiences:
+            raise ValueError("Cannot retrain with empty experiences")
 
-        # Train a new model with the same ID
-        return await self.train_from_experiences(
-            experiences,
-            device_id,
-            use_behavioral_cloning=True,
+        # Create Gymnasium environment from experiences
+        env = HeatingEnvironment(experiences)
+
+        # Initialize new PPO model
+        model = PPO(
+            "MlpPolicy",
+            env,
+            verbose=1,
+            learning_rate=3e-4,
+            n_steps=2048,
+            batch_size=64,
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=0.0,
+            tensorboard_log=None,
         )
+
+        _LOGGER.info("PPO model initialized for retraining")
+
+        # Train the model
+        total_timesteps = len(experiences) * 2
+        callback = TrainingProgressCallback(verbose=1)
+
+        _LOGGER.info("Starting retraining for %d timesteps...", total_timesteps)
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=callback,
+            progress_bar=False,
+        )
+
+        # Save the model with the SAME model_id
+        model_path = self._models_dir / f"{model_id}.zip"
+        model.save(str(model_path))
+
+        _LOGGER.info("Retrained model saved to %s", model_path)
+
+        # Create updated model info (keep original model_id and training_date)
+        updated_model_info = ModelInfo(
+            model_id=model_id,
+            device_id=device_id,
+            training_date=model_info.training_date,
+            model_type="RL_PPO",
+            metrics={
+                "num_experiences": len(experiences),
+                "total_timesteps": total_timesteps,
+                "retrained_at": datetime.now().isoformat(),
+                "avg_episode_reward": (
+                    sum(callback.episode_rewards) / len(callback.episode_rewards)
+                    if callback.episode_rewards
+                    else 0.0
+                ),
+                "avg_episode_length": (
+                    sum(callback.episode_lengths) / len(callback.episode_lengths)
+                    if callback.episode_lengths
+                    else 0
+                ),
+            },
+        )
+
+        # Save model info
+        await self._model_storage.save_model_info(updated_model_info)
+
+        _LOGGER.info("Model info saved after retraining")
+
+        return updated_model_info

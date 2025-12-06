@@ -9,8 +9,6 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from domain.value_objects import (
-    HeatingActionType,
-    RLAction,
     RLExperience,
     RLObservation,
 )
