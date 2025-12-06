@@ -48,6 +48,34 @@ class IModelStorage(ABC):
         pass
 
     @abstractmethod
+    async def load_model_info(self, model_id: str) -> ModelInfo:
+        """Load model information from storage.
+
+        Args:
+            model_id: Identifier of the model to load info for
+
+        Returns:
+            Model information object
+
+        Raises:
+            ModelNotFoundError: If model doesn't exist
+            StorageError: If loading fails
+        """
+        pass
+
+    @abstractmethod
+    async def save_model_info(self, model_info: ModelInfo) -> None:
+        """Save model information to storage.
+
+        Args:
+            model_info: Model information to save
+
+        Raises:
+            StorageError: If saving fails
+        """
+        pass
+
+    @abstractmethod
     async def get_latest_model_id(self) -> str | None:
         """Get the ID of the most recently trained model.
 
