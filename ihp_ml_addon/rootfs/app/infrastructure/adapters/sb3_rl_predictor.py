@@ -41,6 +41,39 @@ class StableBaselines3RLPredictor(IRLModelPredictor):
             self._models_dir,
         )
 
+    async def _ensure_model_loaded(self, model_id: str, device_id: str | None = None) -> PPO:
+        """Ensure a model is loaded and cached.
+
+        Args:
+            model_id: Model identifier (None to load latest for device)
+            device_id: Device identifier (required if model_id is None)
+
+        Returns:
+            Loaded PPO model
+
+        Raises:
+            ValueError: If model not found or invalid parameters
+        """
+        # Get model ID if not provided
+        if model_id is None:
+            if device_id is None:
+                raise ValueError("device_id required when model_id is None")
+            
+            model_id = await self._model_storage.get_latest_model_id_for_device(device_id)
+            if model_id is None:
+                raise ValueError(f"No trained model found for device {device_id}")
+
+        # Load model if not already cached
+        if model_id not in self._loaded_models:
+            model_path = self._models_dir / f"{model_id}.zip"
+            if not model_path.exists():
+                raise ValueError(f"Model {model_id} not found at {model_path}")
+
+            _LOGGER.info("Loading model from %s", model_path)
+            self._loaded_models[model_id] = PPO.load(str(model_path))
+
+        return self._loaded_models[model_id]
+
     async def select_action(
         self,
         observation: RLObservation,
@@ -67,27 +100,8 @@ class StableBaselines3RLPredictor(IRLModelPredictor):
             explore,
         )
 
-        # Get model ID if not provided
-        if model_id is None:
-            # Load latest model for this device
-            model_id = await self._model_storage.get_latest_model_id_for_device(
-                observation.device_id
-            )
-            if model_id is None:
-                raise ValueError(
-                    f"No trained model found for device {observation.device_id}"
-                )
-
-        # Load model if not already cached
-        if model_id not in self._loaded_models:
-            model_path = self._models_dir / f"{model_id}.zip"
-            if not model_path.exists():
-                raise ValueError(f"Model {model_id} not found at {model_path}")
-
-            _LOGGER.info("Loading model from %s", model_path)
-            self._loaded_models[model_id] = PPO.load(str(model_path))
-
-        model = self._loaded_models[model_id]
+        # Ensure model is loaded
+        model = await self._ensure_model_loaded(model_id, observation.device_id)
 
         # Convert observation to numpy array
         obs_array = self._observation_to_array(observation)
@@ -157,27 +171,8 @@ class StableBaselines3RLPredictor(IRLModelPredictor):
         Raises:
             ValueError: If no trained model is available
         """
-        # Get model ID if not provided
-        if model_id is None:
-            # Load latest model for this device
-            model_id = await self._model_storage.get_latest_model_id_for_device(
-                observation.device_id
-            )
-            if model_id is None:
-                raise ValueError(
-                    f"No trained model found for device {observation.device_id}"
-                )
-
-        # Load model if not already cached
-        if model_id not in self._loaded_models:
-            model_path = self._models_dir / f"{model_id}.zip"
-            if not model_path.exists():
-                raise ValueError(f"Model {model_id} not found at {model_path}")
-
-            _LOGGER.info("Loading model from %s", model_path)
-            self._loaded_models[model_id] = PPO.load(str(model_path))
-
-        model = self._loaded_models[model_id]
+        # Ensure model is loaded
+        model = await self._ensure_model_loaded(model_id, observation.device_id)
 
         # Convert observation to numpy array
         obs_array = self._observation_to_array(observation)

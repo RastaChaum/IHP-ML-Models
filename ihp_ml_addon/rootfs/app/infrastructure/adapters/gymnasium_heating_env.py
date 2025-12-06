@@ -16,6 +16,15 @@ from gymnasium import spaces
 
 _LOGGER = logging.getLogger(__name__)
 
+# Default values for missing/optional sensor data
+DEFAULT_OUTDOOR_TEMP = -50.0  # Placeholder for missing outdoor temperature
+DEFAULT_HUMIDITY = 0.0  # Placeholder for missing humidity
+DEFAULT_HEATING_OUTPUT = 0.0  # Placeholder for missing heating output percentage
+DEFAULT_ENERGY = 0.0  # Placeholder for missing energy consumption
+DEFAULT_HEATING_TIME = 0.0  # Placeholder for missing heating on time
+DEFAULT_TEMP_CHANGE = 0.0  # Placeholder for missing temperature change
+DEFAULT_FORECAST_TEMP = -25.0  # Placeholder for missing forecast temperature
+
 
 class HeatingEnvironment(gym.Env):
     """Gymnasium environment for heating control.
@@ -51,21 +60,21 @@ class HeatingEnvironment(gym.Env):
             low=np.array(
                 [
                     -25.0,  # indoor_temp
-                    -50.0,  # outdoor_temp (can be None, use -50 as placeholder)
-                    0.0,  # indoor_humidity (can be None, use 0 as placeholder)
+                    DEFAULT_OUTDOOR_TEMP,  # outdoor_temp (can be None, use default as placeholder)
+                    DEFAULT_HUMIDITY,  # indoor_humidity (can be None, use 0 as placeholder)
                     0.0,  # target_temp
                     -1440.0,  # time_until_target_minutes (can be negative/early)
                     0.0,  # current_target_achieved_percentage
                     0.0,  # is_heating_on (0=off, 1=on)
-                    0.0,  # heating_output_percent
-                    0.0,  # energy_consumption_recent_kwh
-                    0.0,  # time_heating_on_recent_seconds
+                    DEFAULT_HEATING_OUTPUT,  # heating_output_percent
+                    DEFAULT_ENERGY,  # energy_consumption_recent_kwh
+                    DEFAULT_HEATING_TIME,  # time_heating_on_recent_seconds
                     -10.0,  # indoor_temp_change_15min
                     -10.0,  # outdoor_temp_change_15min
                     0.0,  # day_of_week (0-6)
                     0.0,  # hour_of_day (0-23)
-                    -25.0,  # outdoor_temp_forecast_1h
-                    -25.0,  # outdoor_temp_forecast_3h
+                    DEFAULT_FORECAST_TEMP,  # outdoor_temp_forecast_1h
+                    DEFAULT_FORECAST_TEMP,  # outdoor_temp_forecast_3h
                     0.0,  # window_or_door_open (0=closed, 1=open)
                 ],
                 dtype=np.float32,
@@ -186,8 +195,8 @@ class HeatingEnvironment(gym.Env):
         return np.array(
             [
                 obs.indoor_temp,
-                obs.outdoor_temp if obs.outdoor_temp is not None else -50.0,
-                obs.indoor_humidity if obs.indoor_humidity is not None else 0.0,
+                obs.outdoor_temp if obs.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP,
+                obs.indoor_humidity if obs.indoor_humidity is not None else DEFAULT_HUMIDITY,
                 obs.target_temp,
                 float(obs.time_until_target_minutes),
                 (
@@ -196,23 +205,23 @@ class HeatingEnvironment(gym.Env):
                     else 0.0
                 ),
                 1.0 if obs.is_heating_on else 0.0,
-                obs.heating_output_percent if obs.heating_output_percent is not None else 0.0,
+                obs.heating_output_percent if obs.heating_output_percent is not None else DEFAULT_HEATING_OUTPUT,
                 (
                     obs.energy_consumption_recent_kwh
                     if obs.energy_consumption_recent_kwh is not None
-                    else 0.0
+                    else DEFAULT_ENERGY
                 ),
                 (
                     float(obs.time_heating_on_recent_seconds)
                     if obs.time_heating_on_recent_seconds is not None
-                    else 0.0
+                    else DEFAULT_HEATING_TIME
                 ),
-                obs.indoor_temp_change_15min if obs.indoor_temp_change_15min is not None else 0.0,
-                obs.outdoor_temp_change_15min if obs.outdoor_temp_change_15min is not None else 0.0,
+                obs.indoor_temp_change_15min if obs.indoor_temp_change_15min is not None else DEFAULT_TEMP_CHANGE,
+                obs.outdoor_temp_change_15min if obs.outdoor_temp_change_15min is not None else DEFAULT_TEMP_CHANGE,
                 float(obs.day_of_week),
                 float(obs.hour_of_day),
-                obs.outdoor_temp_forecast_1h if obs.outdoor_temp_forecast_1h is not None else -25.0,
-                obs.outdoor_temp_forecast_3h if obs.outdoor_temp_forecast_3h is not None else -25.0,
+                obs.outdoor_temp_forecast_1h if obs.outdoor_temp_forecast_1h is not None else DEFAULT_FORECAST_TEMP,
+                obs.outdoor_temp_forecast_3h if obs.outdoor_temp_forecast_3h is not None else DEFAULT_FORECAST_TEMP,
                 1.0 if obs.window_or_door_open else 0.0,
             ],
             dtype=np.float32,
