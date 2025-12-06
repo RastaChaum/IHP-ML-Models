@@ -289,9 +289,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             Dictionary mapping entity_id to list of state records
         """
-        # Format time for HA API
-        start_str = start_time.isoformat()
-        end_str = end_time.isoformat()
+        # Format time for HA API - Home Assistant requires format without timezone or with Z
+        # Remove microseconds and replace timezone with Z or remove it
+        start_str = start_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z').replace('Z', '')
+        end_str = end_time.replace(microsecond=0).isoformat().replace('+00:00', 'Z').replace('Z', '')
 
         # Build the history URL with filter_entity_id parameter
         entity_filter = ",".join(entity_ids)
@@ -300,7 +301,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         url = urljoin(
             base_url,
             f"api/history/period/{start_str}?end_time={end_str}"
-            f"&filter_entity_id={entity_filter}&minimal_response",
+            f"&filter_entity_id={entity_filter}&minimal_response=true",
         )
 
         _LOGGER.debug("Fetching history chunk from: %s", url)
