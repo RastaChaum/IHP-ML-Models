@@ -22,13 +22,18 @@ from application.services import MLApplicationService
 from domain.value_objects import (
     DeviceConfig,
     PredictionRequest,
+    RLObservation,
     TrainingData,
     TrainingDataPoint,
+    TrainingRequest,
     get_week_of_month,
 )
 from infrastructure.adapters import (
     FileModelStorage,
     HomeAssistantHistoryReader,
+    MemoryReplayBuffer,
+    StableBaselines3RLPredictor,
+    StableBaselines3RLTrainer,
     XGBoostPredictor,
     XGBoostTrainer,
 )
@@ -49,6 +54,18 @@ model_path = Path(os.getenv("MODEL_PERSISTENCE_PATH", "/data/models"))
 storage = FileModelStorage(model_path)
 trainer = XGBoostTrainer(storage)
 predictor = XGBoostPredictor(storage)
+
+# Initialize RL services (if available)
+try:
+    # Use a 5k capacity per device; MemoryReplayBuffer exposes a single max_capacity parameter
+    replay_buffer = MemoryReplayBuffer(max_capacity=5000)
+    rl_trainer = StableBaselines3RLTrainer(storage, None, replay_buffer, str(model_path))
+    rl_predictor = StableBaselines3RLPredictor(storage, str(model_path))
+    _LOGGER.info("RL services initialized successfully")
+except ImportError as e:
+    _LOGGER.warning("RL services not available: %s", e)
+    rl_trainer = None
+    rl_predictor = None
 
 # Initialize Home Assistant history reader if we're running as an addon
 # The SUPERVISOR_TOKEN is automatically provided by Home Assistant
@@ -72,6 +89,10 @@ if supervisor_token:
         ha_token=supervisor_token
     )
     _LOGGER.info("Home Assistant integration enabled")
+    
+    # Update RL trainer with history reader
+    if rl_trainer:
+        rl_trainer._history_reader = ha_history_reader
 else:
     _LOGGER.info("Running in standalone mode (no Home Assistant integration)")
 
@@ -470,6 +491,251 @@ async def delete_model(model_id: str) -> Response:
         return jsonify({"success": True, "deleted_model_id": model_id})
     except Exception as e:
         _LOGGER.exception("Error deleting model")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# RL Model Endpoints
+# ============================================================================
+
+@app.route("/api/v1/rl/train", methods=["POST"])
+@async_route
+async def train_rl_model() -> Response:
+    """Train an RL model using historical data from Home Assistant.
+
+    Request body:
+    {
+        "device_id": str,
+        "indoor_temp_entity_id": str,
+        "outdoor_temp_entity_id": str,
+        "target_temp_entity_id": str,
+        "heating_state_entity_id": str,
+        "humidity_entity_id": str (optional),
+        "window_or_door_open_entity_id": str (optional),
+        "heating_power_entity_id": str (optional),
+        "heating_on_time_entity_id": str (optional),
+        "outdoor_temp_forecast_1h_entity_id": str (optional),
+        "outdoor_temp_forecast_3h_entity_id": str (optional),
+        "start_time": str (ISO datetime, optional - defaults to 30 days ago),
+        "end_time": str (ISO datetime, optional - defaults to now)
+    }
+    """
+    try:
+        if not rl_trainer:
+            return jsonify({
+                "error": "RL training not available. Ensure Stable-Baselines3 is installed."
+            }), 503
+
+        if not ha_history_reader:
+            return jsonify({
+                "error": "Home Assistant integration not available. Ensure the addon has Supervisor access."
+            }), 503
+
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Parse training request
+        try:
+            from datetime import timedelta, timezone
+            
+            end_time = datetime.fromisoformat(data.get("end_time", datetime.now(timezone.utc).isoformat()))
+            start_time_raw = data.get("start_time")
+            if start_time_raw:
+                start_time = datetime.fromisoformat(start_time_raw)
+            else:
+                # Default to 30 days ago
+                start_time = end_time - timedelta(days=30)
+
+            training_request = TrainingRequest(
+                device_id=data.get("device_id", ""),
+                indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
+                outdoor_temp_entity_id=data.get("outdoor_temp_entity_id"),
+                target_temp_entity_id=data.get("target_temp_entity_id", ""),
+                heating_state_entity_id=data.get("heating_state_entity_id", ""),
+                indoor_humidity_entity_id=data.get("humidity_entity_id"),
+                window_or_door_open_entity_id=data.get("window_or_door_open_entity_id"),
+                heating_power_entity_id=data.get("heating_power_entity_id"),
+                heating_on_time_entity_id=data.get("heating_on_time_entity_id"),
+                outdoor_temp_forecast_1h_entity_id=data.get("outdoor_temp_forecast_1h_entity_id"),
+                outdoor_temp_forecast_3h_entity_id=data.get("outdoor_temp_forecast_3h_entity_id"),
+                start_time=start_time,
+                end_time=end_time,
+            )
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": f"Invalid training request: {str(e)}"}), 400
+
+        _LOGGER.info("Training RL model for device %s", training_request.device_id)
+
+        # Train the model
+        model_info = await rl_trainer.train_from_request(training_request)
+
+        return jsonify({
+            "success": True,
+            "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
+            "training_date": model_info.training_date.isoformat(),
+            "model_type": model_info.model_type,
+            "metrics": model_info.metrics,
+        })
+
+    except Exception as e:
+        _LOGGER.exception("Error training RL model")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/rl/predict", methods=["POST"])
+@async_route
+async def predict_rl_action() -> Response:
+    """Get a heating action prediction from a trained RL model.
+
+    Request body:
+    {
+        "device_id": str (required if model_id not specified),
+        "model_id": str (optional - uses latest for device if not specified),
+        "indoor_temp": float,
+        "outdoor_temp": float (optional),
+        "target_temp": float,
+        "is_heating_on": bool,
+        "hour_of_day": int,
+        "day_of_week": int,
+        "time_until_target_minutes": float (optional),
+        "current_target_achieved_percentage": float (optional, 0-100),
+        "indoor_humidity": float (optional),
+        "heating_output_percent": float (optional),
+        "energy_consumption_recent_kwh": float (optional),
+        "time_heating_on_recent_seconds": float (optional),
+        "indoor_temp_change_15min": float (optional),
+        "outdoor_temp_change_15min": float (optional),
+        "outdoor_temp_forecast_1h": float (optional),
+        "outdoor_temp_forecast_3h": float (optional),
+        "window_or_door_open": bool (optional)
+    }
+    """
+    try:
+        if not rl_predictor:
+            return jsonify({
+                "error": "RL prediction not available. Ensure Stable-Baselines3 is installed."
+            }), 503
+
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        device_id = data.get("device_id")
+        model_id = data.get("model_id")
+
+        if not model_id and not device_id:
+            return jsonify({
+                "error": "Either device_id or model_id must be provided"
+            }), 400
+
+        # Parse observation
+        try:
+            observation = RLObservation(
+                device_id=device_id or "unknown",
+                indoor_temp=float(data.get("indoor_temp", 20.0)),
+                outdoor_temp=float(data.get("outdoor_temp")) if data.get("outdoor_temp") is not None else None,
+                target_temp=float(data.get("target_temp", 20.0)),
+                is_heating_on=data.get("is_heating_on", False),
+                hour_of_day=int(data.get("hour_of_day", 12)),
+                day_of_week=int(data.get("day_of_week", 0)),
+                time_until_target_minutes=float(data.get("time_until_target_minutes")) if data.get("time_until_target_minutes") is not None else None,
+                current_target_achieved_percentage=float(data.get("current_target_achieved_percentage")) if data.get("current_target_achieved_percentage") is not None else None,
+                indoor_humidity=float(data.get("indoor_humidity")) if data.get("indoor_humidity") is not None else None,
+                heating_output_percent=float(data.get("heating_output_percent")) if data.get("heating_output_percent") is not None else None,
+                energy_consumption_recent_kwh=float(data.get("energy_consumption_recent_kwh")) if data.get("energy_consumption_recent_kwh") is not None else None,
+                time_heating_on_recent_seconds=int(data.get("time_heating_on_recent_seconds")) if data.get("time_heating_on_recent_seconds") is not None else None,
+                indoor_temp_change_15min=float(data.get("indoor_temp_change_15min")) if data.get("indoor_temp_change_15min") is not None else None,
+                outdoor_temp_change_15min=float(data.get("outdoor_temp_change_15min")) if data.get("outdoor_temp_change_15min") is not None else None,
+                outdoor_temp_forecast_1h=float(data.get("outdoor_temp_forecast_1h")) if data.get("outdoor_temp_forecast_1h") is not None else None,
+                outdoor_temp_forecast_3h=float(data.get("outdoor_temp_forecast_3h")) if data.get("outdoor_temp_forecast_3h") is not None else None,
+                window_or_door_open=data.get("window_or_door_open", False),
+            )
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": f"Invalid observation data: {str(e)}"}), 400
+
+        _LOGGER.info("Predicting action for device %s", device_id)
+
+        # Get action prediction
+        action = await rl_predictor.select_action(observation, model_id=model_id, explore=False)
+
+        return jsonify({
+            "success": True,
+            "action_type": action.action_type.value,
+            "value": action.value,
+            "decision_timestamp": action.decision_timestamp.isoformat(),
+            "confidence_score": action.confidence_score,
+        })
+
+    except ValueError as e:
+        _LOGGER.warning("Invalid prediction request: %s", e)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        _LOGGER.exception("Error predicting RL action")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/rl/models", methods=["GET"])
+@async_route
+async def list_rl_models() -> Response:
+    """List all available RL models.
+
+    Query parameters:
+    - device_id: str (optional) - filter by device
+    """
+    try:
+        device_id = request.args.get("device_id")
+
+        if device_id:
+            models = await storage.list_models_for_device(device_id)
+        else:
+            models = await storage.list_models()
+
+        # Filter to RL models only
+        rl_models = [m for m in models if m.model_type and "RL" in m.model_type]
+
+        return jsonify({
+            "success": True,
+            "models": [
+                {
+                    "model_id": m.model_id,
+                    "device_id": m.device_id,
+                    "training_date": m.training_date.isoformat(),
+                    "model_type": m.model_type,
+                    "metrics": m.metrics,
+                }
+                for m in rl_models
+            ],
+            "count": len(rl_models),
+        })
+
+    except Exception as e:
+        _LOGGER.exception("Error listing RL models")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/rl/models/<model_id>", methods=["GET"])
+@async_route
+async def get_rl_model_info(model_id: str) -> Response:
+    """Get information about a specific RL model."""
+    try:
+        model_info = await storage.load_model_info(model_id)
+
+        if not model_info.model_type or "RL" not in model_info.model_type:
+            return jsonify({"error": "Model is not an RL model"}), 400
+
+        return jsonify({
+            "success": True,
+            "model_id": model_info.model_id,
+            "device_id": model_info.device_id,
+            "training_date": model_info.training_date.isoformat(),
+            "model_type": model_info.model_type,
+            "metrics": model_info.metrics,
+        })
+
+    except Exception as e:
+        _LOGGER.exception("Error getting RL model info")
         return jsonify({"error": str(e)}), 500
 
 

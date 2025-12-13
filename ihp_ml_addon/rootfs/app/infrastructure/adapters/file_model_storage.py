@@ -114,6 +114,34 @@ class FileModelStorage(IModelStorage):
                 model = pickle.load(f)
 
             # Load metadata
+            model_info = await self.load_model_info(model_id)
+
+            _LOGGER.debug("Model loaded: %s", model_id)
+            return model, model_info
+
+        except (OSError, pickle.UnpicklingError) as e:
+            raise StorageError(f"Failed to load model {model_id}: {e}") from e
+
+    async def load_model_info(self, model_id: str) -> ModelInfo:
+        """Load model information from storage.
+
+        Args:
+            model_id: Identifier of the model to load info for
+
+        Returns:
+            Model information object
+
+        Raises:
+            ModelNotFoundError: If model doesn't exist
+            StorageError: If loading fails
+        """
+        metadata_path = self._base_path / f"{model_id}{self.METADATA_FILE_SUFFIX}"
+
+        if not metadata_path.exists():
+            raise ModelNotFoundError(f"Model metadata not found: {model_id}")
+
+        try:
+            # Load metadata
             with open(metadata_path) as f:
                 metadata = json.load(f)
 
@@ -127,11 +155,43 @@ class FileModelStorage(IModelStorage):
                 device_id=metadata.get("device_id"),
             )
 
-            _LOGGER.debug("Model loaded: %s", model_id)
-            return model, model_info
+            _LOGGER.debug("Model info loaded: %s", model_id)
+            return model_info
 
-        except (OSError, pickle.UnpicklingError, json.JSONDecodeError, KeyError) as e:
-            raise StorageError(f"Failed to load model {model_id}: {e}") from e
+        except (OSError, json.JSONDecodeError, KeyError) as e:
+            raise StorageError(f"Failed to load model info {model_id}: {e}") from e
+
+    async def save_model_info(self, model_info: ModelInfo) -> None:
+        """Save model information to storage.
+
+        Args:
+            model_info: Model information to save
+
+        Raises:
+            StorageError: If saving fails
+        """
+        try:
+            # Save metadata
+            metadata_path = self._base_path / f"{model_info.model_id}{self.METADATA_FILE_SUFFIX}"
+            metadata = {
+                "model_id": model_info.model_id,
+                "created_at": model_info.created_at.isoformat(),
+                "training_samples": model_info.training_samples,
+                "feature_names": list(model_info.feature_names),
+                "metrics": model_info.metrics,
+                "version": model_info.version,
+                "device_id": model_info.device_id,
+            }
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            # Update index
+            await self._update_index(model_info.model_id, model_info.created_at, model_info.device_id)
+
+            _LOGGER.debug("Model info saved: %s", model_info.model_id)
+
+        except OSError as e:
+            raise StorageError(f"Failed to save model info {model_info.model_id}: {e}") from e
 
     async def get_latest_model_id(self) -> str | None:
         """Get the ID of the most recently trained model.
