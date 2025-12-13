@@ -16,8 +16,8 @@ services:
   ihp-ml-addon:
     container_name: ihp-ml-addon-dev
     build:
-      context: ./ihp_ml_addon
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./ihp_ml_addon/Dockerfile
     volumes:
       # Mount entire app directory for live editing (no :ro for development)
       - ./ihp_ml_addon/rootfs/app:/app
