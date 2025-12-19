@@ -5,6 +5,7 @@ They have no identity and are compared by their attributes.
 """
 
 from .device_config import DeviceConfig
+from .heating_cycle import HeatingCycle, HeatingCycleCache
 from .model_info import ModelInfo
 from .prediction_request import PredictionRequest
 from .prediction_result import PredictionResult
@@ -23,6 +24,8 @@ __all__ = [
     "DeviceConfig",
     "EntityState",
     "HeatingActionType",
+    "HeatingCycle",
+    "HeatingCycleCache",
     "ModelInfo",
     "PredictionRequest",
     "PredictionResult",

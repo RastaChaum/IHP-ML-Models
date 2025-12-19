@@ -252,10 +252,12 @@ class FileModelStorage(IModelStorage):
 
         for model_id in index:
             try:
-                _, info = await self.load_model(model_id)
+                # Only load model info, not the model itself
+                # This allows listing both .pkl models (XGBoost) and .zip models (RL)
+                info = await self.load_model_info(model_id)
                 models.append(info)
             except (ModelNotFoundError, StorageError) as e:
-                _LOGGER.warning("Failed to load model %s: %s", model_id, e)
+                _LOGGER.warning("Failed to load model info %s: %s", model_id, e)
 
         return sorted(models, key=lambda x: x.created_at, reverse=True)
 

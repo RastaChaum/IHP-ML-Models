@@ -54,7 +54,7 @@ TRAIN_REQUEST=$(cat <<EOF
     "outdoor_temp_entity_id": "$OUTDOOR_TEMP_ENTITY",
     "target_temp_entity_id": "$TARGET_TEMP_ENTITY",
     "heating_state_entity_id": "$HEATING_STATE_ENTITY",
-    "start_time": "$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%S%z)",
+    "start_time": "$(date -u -d '60 days ago' +%Y-%m-%dT%H:%M:%S%z)",
     "end_time": "$(date -u +%Y-%m-%dT%H:%M:%S%z)"
 }
 EOF
@@ -104,15 +104,19 @@ echo ""
 
 # Step 5: Make a prediction
 echo "Step 5: Making a prediction with trained model..."
+NOW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PREDICT_REQUEST=$(cat <<EOF
 {
     "device_id": "$DEVICE_ID",
     "model_id": "$MODEL_ID",
-    "indoor_temp": 18.5,
-    "outdoor_temp": 5.0,
+    "indoor_temp": 20.0,
+    "indoor_temp_timestamp": "$NOW_TS",
     "target_temp": 21.0,
+    "target_temp_timestamp": "$NOW_TS",
+    "outdoor_temp": 5.0,
+    "outdoor_temp_timestamp": "$NOW_TS",
     "is_heating_on": true,
-    "hour_of_day": 14,
+    "hour_of_day": 22,
     "day_of_week": 2,
     "time_until_target_minutes": 45.0,
     "current_target_achieved_percentage": 60.0

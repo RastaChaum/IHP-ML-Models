@@ -51,6 +51,7 @@ class HeatingEnvironment(gym.Env):
         self._experiences = experiences
         self._current_index = 0
         self._episode_rewards: list[float] = []
+        self._episode_start_time = None  # Track episode start time for duration calculation
 
         _LOGGER.info("Initialized HeatingEnvironment with %d experiences", len(experiences))
 
@@ -128,10 +129,18 @@ class HeatingEnvironment(gym.Env):
         # Start from the beginning of experiences
         self._current_index = 0
         self._episode_rewards = []
+        self._episode_start_time = self._experiences[0].state.timestamp  # Track episode start
 
         initial_obs = self._observation_to_array(self._experiences[0].state)
 
-        _LOGGER.debug("Environment reset. Starting at index 0.")
+        _LOGGER.info(
+            "Episode reset: %d experiences available, first_state: indoor=%.1f°C, target=%.1f°C, heating=%s, start_time=%s",
+            len(self._experiences),
+            self._experiences[0].state.indoor_temp,
+            self._experiences[0].state.target_temp,
+            "ON" if self._experiences[0].state.is_heating_on else "OFF",
+            self._episode_start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
         return initial_obs, {}
 
@@ -168,9 +177,20 @@ class HeatingEnvironment(gym.Env):
         if self._current_index >= len(self._experiences):
             terminated = True
 
+        # Calculate episode stats
+        total_episode_reward = sum(self._episode_rewards) if self._episode_rewards else 0.0
+        avg_step_reward = total_episode_reward / len(self._episode_rewards) if self._episode_rewards else 0.0
+        
+        # Calculate episode duration
+        episode_duration_minutes = 0.0
+        if terminated and self._episode_start_time:
+            episode_duration = experience.next_state.timestamp - self._episode_start_time
+            episode_duration_minutes = episode_duration.total_seconds() / 60.0
+        
         info = {
-            "episode_reward": sum(self._episode_rewards) if terminated else None,
+            "episode_reward": total_episode_reward if terminated else None,
             "episode_length": len(self._episode_rewards),
+            "episode_duration_minutes": episode_duration_minutes if terminated else None,
         }
 
         _LOGGER.debug(
@@ -180,6 +200,19 @@ class HeatingEnvironment(gym.Env):
             reward,
             terminated,
         )
+        
+        # Log detailed summary when episode ends
+        if terminated:
+            _LOGGER.info(
+                "Episode terminated: total_reward=%.3f, steps=%d, duration=%.1fmin, avg_reward=%.4f, "
+                "min_reward=%.3f, max_reward=%.3f",
+                total_episode_reward,
+                len(self._episode_rewards),
+                episode_duration_minutes,
+                avg_step_reward,
+                min(self._episode_rewards) if self._episode_rewards else 0.0,
+                max(self._episode_rewards) if self._episode_rewards else 0.0,
+            )
 
         return next_obs, reward, terminated, truncated, info
 

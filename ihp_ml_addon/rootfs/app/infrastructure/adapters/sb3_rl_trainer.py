@@ -21,6 +21,27 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 _LOGGER = logging.getLogger(__name__)
 
+# RL model features (observation space components used for training)
+RL_FEATURE_NAMES = (
+    "indoor_temp",
+    "target_temp",
+    "time_until_target_minutes",
+    "is_heating_on",
+    "outdoor_temp",
+    "indoor_humidity",
+    "indoor_temp_change_15min",
+    "outdoor_temp_change_15min",
+    "day_of_week",
+    "hour_of_day",
+    "heating_output_percent",
+    "energy_consumption_recent_kwh",
+    "time_heating_on_recent_seconds",
+    "outdoor_temp_forecast_1h",
+    "outdoor_temp_forecast_3h",
+    "window_or_door_open",
+    "current_target_achieved_percentage",
+)
+
 
 class TrainingProgressCallback(BaseCallback):
     """Callback to log training progress."""
@@ -29,20 +50,35 @@ class TrainingProgressCallback(BaseCallback):
         super().__init__(verbose)
         self.episode_rewards: list[float] = []
         self.episode_lengths: list[int] = []
+        self.episode_count = 0
 
     def _on_step(self) -> bool:
         # Check if an episode ended
         if self.locals.get("dones") is not None:
             for i, done in enumerate(self.locals["dones"]):
                 if done and "episode" in self.locals["infos"][i]:
+                    self.episode_count += 1
                     episode_reward = self.locals["infos"][i]["episode"]["r"]
                     episode_length = self.locals["infos"][i]["episode"]["l"]
                     self.episode_rewards.append(episode_reward)
                     self.episode_lengths.append(episode_length)
+                    
+                    # Calculate statistics
+                    avg_reward = sum(self.episode_rewards) / len(self.episode_rewards)
+                    avg_length = sum(self.episode_lengths) / len(self.episode_lengths)
+                    min_reward = min(self.episode_rewards)
+                    max_reward = max(self.episode_rewards)
+                    
                     _LOGGER.info(
-                        "Episode finished: reward=%.2f, length=%d",
+                        "Episode %d finished: reward=%.2f, length=%d | "
+                        "Stats: avg_reward=%.2f, avg_length=%.1f, min=%.2f, max=%.2f",
+                        self.episode_count,
                         episode_reward,
                         episode_length,
+                        avg_reward,
+                        avg_length,
+                        min_reward,
+                        max_reward,
                     )
         return True
 
@@ -172,9 +208,11 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
         model_info = ModelInfo(
             model_id=model_id,
             device_id=device_id,
-            training_date=datetime.now(),
-            model_type="RL_PPO",
+            created_at=datetime.now(),
+            training_samples=len(experiences),
+            feature_names=RL_FEATURE_NAMES,
             metrics={
+                "model_type": "RL_PPO",
                 "num_experiences": len(experiences),
                 "total_timesteps": total_timesteps,
                 "avg_episode_reward": (
@@ -318,8 +356,9 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
         updated_model_info = ModelInfo(
             model_id=model_id,
             device_id=model_info.device_id,
-            training_date=model_info.training_date,
-            model_type=model_info.model_type,
+            created_at=model_info.created_at,
+            training_samples=model_info.training_samples + len(experiences),
+            feature_names=model_info.feature_names,
             metrics=updated_metrics,
         )
 
@@ -401,13 +440,15 @@ class StableBaselines3RLTrainer(IRLModelTrainer):
 
         _LOGGER.info("Retrained model saved to %s", model_path)
 
-        # Create updated model info (keep original model_id and training_date)
+        # Create updated model info (keep original model_id and created_at)
         updated_model_info = ModelInfo(
             model_id=model_id,
             device_id=device_id,
-            training_date=model_info.training_date,
-            model_type="RL_PPO",
+            created_at=model_info.created_at,
+            training_samples=len(experiences),
+            feature_names=RL_FEATURE_NAMES,
             metrics={
+                "model_type": "RL_PPO",
                 "num_experiences": len(experiences),
                 "total_timesteps": total_timesteps,
                 "retrained_at": datetime.now().isoformat(),

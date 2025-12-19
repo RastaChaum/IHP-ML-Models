@@ -145,6 +145,8 @@ class MLApplicationService:
             start_time=start_time,
             end_time=end_time,
             cycle_split_duration_minutes=device_config.cycle_split_duration_minutes,
+            device_id=device_config.device_id,
+            retention_days=device_config.history_days,
         )
 
         _LOGGER.info(
