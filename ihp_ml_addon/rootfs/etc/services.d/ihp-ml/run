@@ -48,4 +48,4 @@ mkdir -p "${MODEL_PERSISTENCE_PATH}"
 
 # Start the Flask application
 cd /app
-exec poetry run python -m infrastructure.api.server
+exec poetry run python3 -m infrastructure.api.server

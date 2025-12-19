@@ -2,6 +2,19 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python: Flask Server (Local)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ihp_ml_addon/rootfs/app/infrastructure/api/server.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/ihp_ml_addon/rootfs/app"
+      }
+    },
+    {
       "name": "Python: Remote Attach (Docker)",
       "type": "debugpy",
       "request": "attach",
@@ -24,13 +37,30 @@
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/ihp_ml_addon/rootfs/app"
       }
     },
     {
-      "name": "Python: Run Tests",
+      "name": "Python: Pytest Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "${file}",
+        "-v",
+        "-s"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "Python: Run All Tests",
       "type": "debugpy",
       "request": "launch",
       "module": "pytest",
@@ -40,7 +70,9 @@
         "-s"
       ],
       "console": "integratedTerminal",
-      "justMyCode": false
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
     }
   ]
 }

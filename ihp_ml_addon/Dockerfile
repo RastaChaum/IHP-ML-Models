@@ -9,37 +9,38 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 \
-        python3-pip \
         python3-dev \
-        python3-venv \
         build-essential \
         libgomp1 \
         libopenblas-dev \
         jq \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create and use a virtual environment to avoid PEP 668 restrictions
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Install Poetry and configure it
+ENV POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_CACHE_DIR='/var/cache/pypoetry' \
+    POETRY_HOME='/usr/local'
+RUN curl -sSL https://install.python-poetry.org | python3 -
+ENV PATH="$POETRY_HOME/bin:$PATH"
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt /tmp/
-RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel setuptools \
-    && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
-    && rm -rf /tmp/requirements.txt
-
-# Copy application code and S6 service definitions
-COPY rootfs/app /app
-COPY rootfs/scripts /scripts
-COPY rootfs/etc /etc
-
-# Set working directory
+# Copy ONLY dependency files first (for better caching)
 WORKDIR /app
+COPY pyproject.toml poetry.lock* /app/
+
+# Install dependencies (this layer will be cached unless dependencies change)
+RUN poetry install --without dev,test --no-root --no-interaction --no-ansi
+
+# Copy S6 service definitions (these change rarely)
+COPY ./ihp_ml_addon/rootfs/etc /etc
 
 # Make scripts executable
-RUN chmod a+x /scripts/run.sh \
-    && chmod a+x /etc/services.d/ihp-ml/run \
+RUN chmod a+x /etc/services.d/ihp-ml/run \
     && chmod a+x /etc/services.d/ihp-ml/finish
+
+# Copy application code LAST (changes frequently in dev)
+# Use wildcard to copy contents without replacing the directory itself
+COPY ./ihp_ml_addon/rootfs/app/ /app/
 
 # Expose HTTP API port
 EXPOSE 5000

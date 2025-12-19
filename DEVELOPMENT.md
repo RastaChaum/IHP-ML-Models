@@ -6,11 +6,12 @@ This guide explains how to set up a local development environment for testing th
 
 - Docker and Docker Compose installed
 - Git
+- Python 3.12+ with Poetry (for local development without Docker)
 - Basic understanding of Home Assistant add-ons
 
 ## 🚀 Quick Start
 
-### 1. Set up development environment
+### Option 1: Docker (Recommended for testing)
 
 ```bash
 # Make scripts executable
@@ -26,6 +27,26 @@ This will:
 - Create sample configuration files
 - Set up test data directories
 
+### Option 2: Local Python (Recommended for debugging)
+
+```bash
+# 1. Install dependencies
+poetry install
+
+# 2. Configure environment variables
+cp .env.example .env
+# Edit .env with your local settings
+
+# 3. Run the server directly
+poetry run python ihp_ml_addon/rootfs/app/infrastructure/api/server.py
+```
+
+**Avantages du mode local :**
+- Debugging avec VSCode (breakpoints, step-by-step)
+- Rechargement automatique du code
+- Pas besoin de rebuild Docker à chaque modification
+- Les variables d'environnement sont chargées automatiquement depuis `.env`
+
 ### 2. Test the addon
 
 ```bash
@@ -37,6 +58,32 @@ This will:
 
 - **Home Assistant**: http://localhost:8123
 - **IHP ML Addon API**: http://localhost:5000
+
+## ⚙️ Configuration des variables d'environnement
+
+Le projet utilise `python-dotenv` pour charger automatiquement les variables depuis un fichier `.env`.
+
+### Fichier `.env` (développement local)
+
+```bash
+# Configuration locale pour VSCode
+LOG_LEVEL=DEBUG
+LOG_DIR=./test-data/logs
+MODEL_PERSISTENCE_PATH=./test-data/models
+SUPERVISOR_URL=http://192.168.1.100:8123
+SUPERVISOR_TOKEN=ton_token_longue_duree
+```
+
+### Docker Compose
+
+Le fichier `.env` est aussi utilisé par docker-compose. Pas besoin de dupliquer la configuration !
+
+**Priorité des variables :**
+1. Variables système (export dans shell)
+2. Variables docker-compose
+3. Variables `.env`
+
+📖 Voir [docs/DOTENV.md](docs/DOTENV.md) pour plus de détails.
 
 ## 📁 Project Structure
 
@@ -50,7 +97,10 @@ IHP-ML-Models/
 │       └── app/            # Application code
 ├── test-config/            # Home Assistant test configuration (auto-generated)
 ├── test-data/              # Test data and models (auto-generated)
+├── .env                    # Variables d'environnement (local, non versionné)
+├── .env.example            # Template de configuration
 ├── docker compose.yml      # Local development setup
+├── pyproject.toml          # Poetry dependencies
 └── scripts/
     ├── develop.sh          # Start development environment
     ├── test-addon.sh       # Run API tests
@@ -59,13 +109,33 @@ IHP-ML-Models/
 
 ## 🔧 Development Workflow
 
-### Starting Development
+### Starting Development (Docker)
 
 ```bash
 ./scripts/develop.sh
 ```
 
+### Starting Development (Local Python + VSCode)
+
+1. **Configurer `.env`** :
+   ```bash
+   cp .env.example .env
+   # Éditer .env avec tes valeurs
+   ```
+
+2. **Installer les dépendances** :
+   ```bash
+   poetry install
+   ```
+
+3. **Lancer avec le debugger VSCode** :
+   - Ouvrir `server.py` dans VSCode
+   - Appuyer sur F5 ou "Run > Start Debugging"
+   - Le fichier `.env` sera chargé automatiquement
+
 ### Viewing Logs
+
+#### Docker
 
 ```bash
 # All logs
@@ -77,6 +147,23 @@ docker compose logs -f ihp-ml-addon
 # Just Home Assistant logs
 docker compose logs -f homeassistant
 ```
+
+#### Local Python
+
+Les logs sont écrits dans les fichiers configurés via `LOG_DIR` (défaut: `./test-data/logs/`) :
+
+```bash
+# Logs principaux (niveau LOG_LEVEL)
+tail -f ./test-data/logs/ihp_ml.log
+
+# Logs debug complets
+tail -f ./test-data/logs/ihp_ml_debug.log
+
+# Analyser les logs
+./scripts/analyze-logs.sh
+```
+
+📖 Voir [docs/LOGGING.md](docs/LOGGING.md) pour plus de détails sur la configuration des logs.
 
 ### Making Code Changes
 

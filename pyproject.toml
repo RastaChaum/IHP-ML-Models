@@ -14,6 +14,7 @@ python = ">=3.12,<3.14"
 xgboost = ">=2.0.0,<3.0.0"
 numpy = ">=1.26.0,<2.0.0"
 scikit-learn = ">=1.4.0,<2.0.0"
+torch = {version = ">=2.1.0,<3.0.0", source = "pytorch"}
 stable-baselines3 = ">=2.2.0,<3.0.0"
 gymnasium = ">=0.29.0,<1.0.0"
 
@@ -25,6 +26,13 @@ requests = ">=2.31.0,<3.0.0"
 
 # Utilities
 pydantic = ">=2.0.0,<3.0.0"
+debugpy = ">=1.6.6,<2.0.0"
+python-dotenv = ">=1.0.0,<2.0.0"
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2"

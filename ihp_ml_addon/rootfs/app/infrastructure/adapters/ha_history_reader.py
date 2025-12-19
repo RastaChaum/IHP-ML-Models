@@ -53,6 +53,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         reward_calculator: IRewardCalculator | None = None,
         action_service: RLActionService | None = None,
         episode_service: RLEpisodeService | None = None,
+        use_ihp_api: bool = False,
+        ihp_api_url: str | None = None,
     ) -> None:
         """Initialize the Home Assistant history reader.
 
@@ -71,6 +73,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self._ha_token = ha_token or os.getenv("SUPERVISOR_TOKEN", "")
         self._timeout = timeout
         self._reward_calculator = reward_calculator
+        
+        # IHP API configuration
+        self._use_ihp_api = use_ihp_api
+        self._ihp_api_url = ihp_api_url or "http://supervisor/core/api/ihp/heating_cycles"
         
         # Domain services for RL logic
         self._action_service = action_service or RLActionService()
@@ -168,15 +174,27 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         history_data = await self._fetch_history(entity_ids, start_time, end_time)
 
         # Extract heating cycles and create training data points
-        data_points = self._extract_heating_cycles(
-            history_data,
-            indoor_temp_entity_id,
-            outdoor_temp_entity_id,
-            target_temp_entity_id,
-            heating_state_entity_id,
-            humidity_entity_id,
-            cycle_split_duration_minutes,
-        )
+        if self._use_ihp_api:
+            data_points = await self._extract_heating_cycles_via_ihp_api(
+                indoor_temp_entity_id,
+                outdoor_temp_entity_id,
+                target_temp_entity_id,
+                heating_state_entity_id,
+                humidity_entity_id,
+                start_time,
+                end_time,
+                cycle_split_duration_minutes,
+            )
+        else:
+            data_points = self._extract_heating_cycles(
+                history_data,
+                indoor_temp_entity_id,
+                outdoor_temp_entity_id,
+                target_temp_entity_id,
+                heating_state_entity_id,
+                humidity_entity_id,
+                cycle_split_duration_minutes,
+            )
 
         if not data_points:
             raise ValueError("No valid heating cycles found in historical data")
@@ -189,6 +207,76 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         )
 
         return TrainingData.from_sequence(data_points)
+
+    async def _extract_heating_cycles_via_ihp_api(
+        self,
+        indoor_temp_entity_id: str,
+        outdoor_temp_entity_id: str,
+        target_temp_entity_id: str,
+        heating_state_entity_id: str,
+        humidity_entity_id: str | None,
+        start_time: datetime,
+        end_time: datetime,
+        cycle_split_duration_minutes: int | None = None,
+    ) -> list[TrainingDataPoint]:
+        """Extract heating cycles using IHP API instead of local logic."""
+        _LOGGER.info("Extracting heating cycles via IHP API")
+        
+        # Prepare entity mapping for IHP API
+        entity_ids = {
+            "indoor_temp": indoor_temp_entity_id,
+            "outdoor_temp": outdoor_temp_entity_id,
+            "target_temp": target_temp_entity_id,
+            "heating_state": heating_state_entity_id,
+        }
+        if humidity_entity_id:
+            entity_ids["humidity"] = humidity_entity_id
+        
+        # Prepare request payload
+        payload = {
+            "entity_ids": entity_ids,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+        }
+        if cycle_split_duration_minutes:
+            payload["cycle_split_duration_minutes"] = cycle_split_duration_minutes
+        
+        try:
+            response = requests.post(
+                self._ihp_api_url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get("status") != "success":
+                raise ValueError(f"IHP API error: {result.get('message', 'Unknown error')}")
+            
+            # Convert cycles to TrainingDataPoint
+            data_points = []
+            for cycle_data in result["data"]["cycles"]:
+                # Convert cycle data to TrainingDataPoint
+                # This is a simplified conversion - adjust as needed
+                data_point = TrainingDataPoint(
+                    outdoor_temp=cycle_data.get("start_temp", 0.0),  # Placeholder
+                    indoor_temp=cycle_data["start_temp"],
+                    target_temp=cycle_data["target_temp"],
+                    humidity=cycle_data.get("humidity", 50.0),  # Placeholder
+                    hour_of_day=cycle_data["start_hour"],
+                    minutes_since_last_cycle=0.0,  # Placeholder
+                    heating_duration_minutes=cycle_data["total_heating_duration_minutes"],
+                    timestamp=datetime.fromisoformat(cycle_data["start_time"]),
+                )
+                data_points.append(data_point)
+            
+            _LOGGER.info("Extracted %d training data points via IHP API", len(data_points))
+            return data_points
+            
+        except requests.RequestException as e:
+            _LOGGER.error("Failed to call IHP API: %s", e)
+            raise ConnectionError(f"Failed to call IHP API: {e}") from e
 
     async def _fetch_history(
         self,
@@ -896,15 +984,69 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             sampling_interval_minutes,
         )
 
-        _LOGGER.debug("Sampled %d observations", len(observations))
+        _LOGGER.info("Sampled %d observations from history", len(observations))
+        
+        if not observations:
+            _LOGGER.warning("No observations sampled - check entity data availability")
+            return experiences
+        
+        # STEP 1: Calculate time_until_target for each observation by looking forward
+        # to when the target temperature is actually reached
+        observations_with_timing = self._calculate_retroactive_time_until_target(observations)
+        
+        # STEP 2: Filter to keep ONLY heating phases (temp < target - threshold)
+        # This is critical: we want the model to learn preheating, not cooling or maintenance
+        # We exclude observations too close to target (maintenance mode)
+        HEATING_START_THRESHOLD = 0.5  # Only consider heating if temp is 0.5°C below target
+        heating_observations = [
+            obs for obs in observations_with_timing
+            if obs.indoor_temp < obs.target_temp - HEATING_START_THRESHOLD
+        ]
+        
+        _LOGGER.info(
+            "Filtered to %d heating observations from %d total (%.1f%% are heating phases)",
+            len(heating_observations),
+            len(observations_with_timing),
+            (len(heating_observations) / len(observations_with_timing) * 100) if observations_with_timing else 0,
+        )
+        
+        if not heating_observations:
+            _LOGGER.warning("No heating observations found - all temps at or above target")
+            return experiences
 
-        # Create experiences from consecutive observation pairs
-        for i in range(len(observations) - 1):
-            current_obs = observations[i]
-            next_obs = observations[i + 1]
+        # Create experiences from consecutive observation pairs (heating phases only)
+        episode_count = 0
+        current_episode_experiences = 0
+        heating_was_on_previous = False
+        
+        for i in range(len(heating_observations) - 1):
+            current_obs = heating_observations[i]
+            next_obs = heating_observations[i + 1]
 
-            # Infer action based on heating state transition
-            action = self._infer_action(current_obs, next_obs)
+            # TURN_ON action: Detect when heating starts (was off, now on)
+            # This is critical for the model to learn WHEN to start heating
+            # Only trigger TURN_ON if temp is sufficiently below target (real heating needed, not maintenance)
+            heating_is_on_now = current_obs.is_heating_on
+            temp_diff_from_target = current_obs.target_temp - current_obs.indoor_temp
+            
+            if heating_is_on_now and not heating_was_on_previous and temp_diff_from_target >= HEATING_START_THRESHOLD:
+                # Heating just turned ON at this observation (not just maintenance mode)
+                action = RLAction(
+                    action_type=HeatingActionType.TURN_ON,
+                    value=current_obs.target_temp,
+                    decision_timestamp=current_obs.timestamp,
+                    confidence_score=None
+                )
+                _LOGGER.debug(
+                    "Episode %d: Heating TURN_ON detected at temp=%.1f°C, target=%.1f°C (delta=%.1f°C), time_until_target=%.1f min",
+                    episode_count + 1, current_obs.indoor_temp, current_obs.target_temp,
+                    temp_diff_from_target, current_obs.time_until_target_minutes
+                )
+            else:
+                # Infer action based on heating state transition for middle/end of cycle
+                action = self._infer_action(current_obs, next_obs)
+            
+            heating_was_on_previous = heating_is_on_now
 
             # Calculate reward for this transition
             reward = self._reward_calculator.calculate_reward(
@@ -915,6 +1057,22 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
 
             # Determine if episode is done (target reached or significant time passed)
             done = self._is_episode_done(next_obs, current_obs)
+            
+            # Track episodes
+            current_episode_experiences += 1
+            if done:
+                episode_count += 1
+                _LOGGER.debug(
+                    "Episode %d ended: %d experiences, last_reward=%.3f, "
+                    "temp=%.1f°C (target=%.1f°C), time_until_target=%.1fmin",
+                    episode_count,
+                    current_episode_experiences,
+                    reward,
+                    next_obs.indoor_temp,
+                    next_obs.target_temp,
+                                    next_obs.time_until_target_minutes,
+                )
+                current_episode_experiences = 0
 
             # Create experience
             try:
@@ -929,7 +1087,12 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             except ValueError as e:
                 _LOGGER.debug("Skipping invalid RL experience: %s", e)
 
-        _LOGGER.info("Created %d RL experiences", len(experiences))
+        _LOGGER.info(
+            "Created %d RL experiences across %d episodes (avg %.1f exp/episode) - HEATING PHASES ONLY",
+            len(experiences),
+            episode_count,
+            len(experiences) / episode_count if episode_count > 0 else 0,
+        )
         return experiences
 
     def _sample_observations(
@@ -994,19 +1157,37 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             RLObservation if all required data is available, None otherwise
         """
+        # Determine if entities are climate entities
+        indoor_is_climate = training_request.indoor_temp_entity_id.startswith("climate.")
+        target_is_climate = training_request.target_temp_entity_id.startswith("climate.")
+        
         # Extract indoor temperature (required)
-        indoor_temp = self._get_value_at_time(
-            history_data.get(training_request.indoor_temp_entity_id, []),
-            timestamp,
-        )
+        if indoor_is_climate:
+            indoor_temp = self._get_value_at_time(
+                history_data.get(training_request.indoor_temp_entity_id, []),
+                timestamp,
+                attribute_name="current_temperature",
+            )
+        else:
+            indoor_temp = self._get_value_at_time(
+                history_data.get(training_request.indoor_temp_entity_id, []),
+                timestamp,
+            )
         if indoor_temp is None:
             return None
 
         # Extract target temperature (required)
-        target_temp = self._get_value_at_time(
-            history_data.get(training_request.target_temp_entity_id, []),
-            timestamp,
-        )
+        if target_is_climate:
+            target_temp = self._get_value_at_time(
+                history_data.get(training_request.target_temp_entity_id, []),
+                timestamp,
+                attribute_name="temperature",
+            )
+        else:
+            target_temp = self._get_value_at_time(
+                history_data.get(training_request.target_temp_entity_id, []),
+                timestamp,
+            )
         if target_temp is None:
             return None
 
@@ -1032,10 +1213,19 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         # Extract optional fields
         outdoor_temp = None
         if training_request.outdoor_temp_entity_id:
-            outdoor_temp = self._get_value_at_time(
-                history_data.get(training_request.outdoor_temp_entity_id, []),
-                timestamp,
-            )
+            # Outdoor temperature might be from a climate entity or sensor
+            outdoor_is_climate = training_request.outdoor_temp_entity_id.startswith("climate.")
+            if outdoor_is_climate:
+                outdoor_temp = self._get_value_at_time(
+                    history_data.get(training_request.outdoor_temp_entity_id, []),
+                    timestamp,
+                    attribute_name="current_temperature",
+                )
+            else:
+                outdoor_temp = self._get_value_at_time(
+                    history_data.get(training_request.outdoor_temp_entity_id, []),
+                    timestamp,
+                )
 
         indoor_humidity = None
         if training_request.indoor_humidity_entity_id:
@@ -1155,9 +1345,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         day_of_week = timestamp.weekday()
         hour_of_day = timestamp.hour
 
-        # Simplified time_until_target_minutes (in real scenario, would come from scheduler)
-        # For historical data, we assume target should be reached "now"
-        time_until_target_minutes = 0
+        # Placeholder for time_until_target_minutes
+        # This will be calculated retroactively by looking forward to when target is reached
+        time_until_target_minutes = 0.0
 
         # Calculate target achievement percentage
         temp_diff = abs(indoor_temp - target_temp)
@@ -1355,3 +1545,109 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             True if episode should end, False otherwise
         """
         return self._episode_service.is_episode_done(current_obs, previous_obs)
+
+    def _calculate_retroactive_time_until_target(
+        self,
+        observations: list[RLObservation],
+    ) -> list[RLObservation]:
+        """Calculate time_until_target retroactively by looking forward in time.
+        
+        For each observation, we look ahead to find when the target temperature
+        is actually reached. This gives us the TRUE time it took to reach the target,
+        which is what the model should learn to predict.
+        
+        Example:
+            07h00: temp=18°C, target=20°C, heating ON
+            07h30: temp=19°C, target=20°C, heating ON
+            08h00: temp=20°C ← TARGET REACHED
+            
+            Retroactively:
+            - At 07h00: time_until_target = 60 min (08h00 - 07h00)
+            - At 07h30: time_until_target = 30 min (08h00 - 07h30)
+            - At 08h00: time_until_target = 0 min
+        
+        Args:
+            observations: List of observations in chronological order
+            
+        Returns:
+            List of observations with updated time_until_target_minutes
+        """
+        from dataclasses import replace
+        
+        updated_observations = []
+        stats_found = 0
+        stats_estimated = 0
+        
+        for i, obs in enumerate(observations):
+            # Only calculate for heating phases (temp < target)
+            if obs.indoor_temp >= obs.target_temp:
+                # Not in heating phase, keep as is (time_until_target = 0)
+                updated_observations.append(obs)
+                continue
+            
+            # Look forward in time to find when target is reached
+            target_reached_time = None
+            current_target = obs.target_temp
+            
+            # Search forward for when temperature reaches target (within tolerance)
+            for j in range(i + 1, len(observations)):
+                future_obs = observations[j]
+                
+                # Stop if target changed (new heating cycle started)
+                if abs(future_obs.target_temp - current_target) > 0.5:
+                    _LOGGER.debug(
+                        "Target changed at index %d: %.1f°C → %.1f°C (was looking from %.1f°C at %s)",
+                        j, current_target, future_obs.target_temp, obs.indoor_temp, obs.timestamp
+                    )
+                    break
+                
+                # Check if target is reached (within 0.3°C tolerance)
+                if abs(future_obs.indoor_temp - current_target) <= 0.3:
+                    target_reached_time = future_obs.timestamp
+                    stats_found += 1
+                    _LOGGER.debug(
+                        "Target reached at index %d: %.1f°C (at %s, %.1f min after observation at %s)",
+                        j, future_obs.indoor_temp, target_reached_time,
+                        (target_reached_time - obs.timestamp).total_seconds() / 60.0,
+                        obs.timestamp
+                    )
+                    break
+                
+                # Stop searching after 3 hours lookahead
+                time_diff = (future_obs.timestamp - obs.timestamp).total_seconds() / 60.0
+                if time_diff > 180:
+                    _LOGGER.debug(
+                        "Lookahead timeout at index %d: %.1f min elapsed, temp=%.1f°C, target=%.1f°C",
+                        j, time_diff, future_obs.indoor_temp, current_target
+                    )
+                    break
+            
+            # Calculate time_until_target using TIMESTAMP DIFFERENCE
+            if target_reached_time:
+                # Found when target is reached - use actual timestamp difference
+                time_until_target = (target_reached_time - obs.timestamp).total_seconds() / 60.0
+                _LOGGER.debug(
+                    "Observation at %s (temp=%.1f°C): time_until_target = %.1f min (target reached at %s)",
+                    obs.timestamp, obs.indoor_temp, time_until_target, target_reached_time
+                )
+            else:
+                # Target not reached in lookahead window - estimate
+                temp_diff = abs(obs.target_temp - obs.indoor_temp)
+                # Assume ~0.5°C per 10 minutes (conservative estimate for floor heating)
+                time_until_target = min(180.0, temp_diff * 20.0)
+                stats_estimated += 1
+                _LOGGER.debug(
+                    "Observation at %s (temp=%.1f°C): time_until_target = %.1f min (ESTIMATED from temp_diff=%.1f°C)",
+                    obs.timestamp, obs.indoor_temp, time_until_target, temp_diff
+                )
+            
+            # Create updated observation with correct time_until_target
+            updated_obs = replace(obs, time_until_target_minutes=time_until_target)
+            updated_observations.append(updated_obs)
+        
+        _LOGGER.info(
+            "Calculated retroactive time_until_target for %d observations: %d found from history, %d estimated",
+            len(updated_observations), stats_found, stats_estimated
+        )
+        
+        return updated_observations

@@ -13,15 +13,23 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
+
+# Load environment variables from .env file (for local development)
+# This will not override existing environment variables
+load_dotenv()
 
 # Add app directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from application.services import MLApplicationService
+from domain.services import HeatingRewardCalculator
 from domain.value_objects import (
     DeviceConfig,
+    EntityState,
     PredictionRequest,
+    RewardConfig,
     RLObservation,
     TrainingData,
     TrainingDataPoint,
@@ -37,13 +45,10 @@ from infrastructure.adapters import (
     XGBoostPredictor,
     XGBoostTrainer,
 )
+from infrastructure.logging_config import setup_logging
 
-# Configure logging
-log_level = os.getenv("LOG_LEVEL", "info").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging with file output
+setup_logging()
 _LOGGER = logging.getLogger(__name__)
 
 # Create Flask app
@@ -84,9 +89,14 @@ _LOGGER.info("SUPERVISOR_URL: %s", supervisor_url or "(not set)")
 _LOGGER.info("="*60)
 
 if supervisor_token:
+    # Create reward calculator for RL experience construction
+    reward_config = RewardConfig()
+    reward_calculator = HeatingRewardCalculator(config=reward_config)
+    
     ha_history_reader = HomeAssistantHistoryReader(
         ha_url=supervisor_url,
-        ha_token=supervisor_token
+        ha_token=supervisor_token,
+        reward_calculator=reward_calculator
     )
     _LOGGER.info("Home Assistant integration enabled")
     
@@ -574,8 +584,9 @@ async def train_rl_model() -> Response:
             "success": True,
             "model_id": model_info.model_id,
             "device_id": model_info.device_id,
-            "training_date": model_info.training_date.isoformat(),
-            "model_type": model_info.model_type,
+            "created_at": model_info.created_at.isoformat(),
+            "training_samples": model_info.training_samples,
+            "model_type": model_info.metrics.get("model_type", "RL_PPO"),
             "metrics": model_info.metrics,
         })
 
@@ -630,27 +641,118 @@ async def predict_rl_action() -> Response:
                 "error": "Either device_id or model_id must be provided"
             }), 400
 
-        # Parse observation
+        # Parse observation, computing last_changed_minutes per entity from provided timestamps
         try:
+            def _parse_ts(label: str, raw: str | None, required: bool) -> datetime | None:
+                if raw is None:
+                    if required:
+                        raise ValueError(f"timestamp for {label} is required when providing value")
+                    return None
+                try:
+                    ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except Exception:
+                    raise ValueError(f"timestamp for {label} must be ISO formatted")
+                if ts.tzinfo is None:
+                    from datetime import timezone
+                    ts = ts.replace(tzinfo=timezone.utc)
+                return ts
+
+            def _minutes_since(ts: datetime | None, now_ref: datetime) -> float:
+                if ts is None:
+                    return 0.0
+                delta = now_ref - ts
+                return max(0.0, delta.total_seconds() / 60.0)
+
+            # Required: indoor_temp + timestamp, target_temp + timestamp
+            indoor_ts = _parse_ts("indoor_temp", data.get("indoor_temp_timestamp"), True)
+            target_ts = _parse_ts("target_temp", data.get("target_temp_timestamp"), True)
+
+            # Optional values + timestamps
+            outdoor_val = data.get("outdoor_temp")
+            outdoor_ts = _parse_ts("outdoor_temp", data.get("outdoor_temp_timestamp"), outdoor_val is not None)
+
+            indoor_hum_val = data.get("indoor_humidity")
+            indoor_hum_ts = _parse_ts("indoor_humidity", data.get("indoor_humidity_timestamp"), indoor_hum_val is not None)
+
+            heating_output_val = data.get("heating_output_percent")
+            heating_output_ts = _parse_ts("heating_output_percent", data.get("heating_output_timestamp"), heating_output_val is not None)
+
+            energy_val = data.get("energy_consumption_recent_kwh")
+            energy_ts = _parse_ts("energy_consumption_recent_kwh", data.get("energy_consumption_timestamp"), energy_val is not None)
+
+            heating_on_val = data.get("time_heating_on_recent_seconds")
+            heating_on_ts = _parse_ts("time_heating_on_recent_seconds", data.get("time_heating_on_timestamp"), heating_on_val is not None)
+
+            window_val = data.get("window_or_door_open")
+            window_ts = _parse_ts("window_or_door_open", data.get("window_or_door_timestamp"), window_val is not None)
+
+            # Use timezone-aware 'now' matching the parsed timestamps to avoid naive/aware subtraction issues
+            tzinfo_ref = (indoor_ts or target_ts).tzinfo if (indoor_ts or target_ts) else None
+            if tzinfo_ref is None:
+                from datetime import timezone
+                tzinfo_ref = timezone.utc
+            now_ts = datetime.now(tzinfo_ref)
+
+            # Compute minutes since for each
+            indoor_minutes = _minutes_since(indoor_ts, now_ts)
+            target_minutes = _minutes_since(target_ts, now_ts)
+            outdoor_minutes = _minutes_since(outdoor_ts, now_ts)
+            humidity_minutes = _minutes_since(indoor_hum_ts, now_ts)
+            heating_output_minutes = _minutes_since(heating_output_ts, now_ts)
+            energy_minutes = _minutes_since(energy_ts, now_ts)
+            heating_on_minutes = _minutes_since(heating_on_ts, now_ts)
+            window_minutes = _minutes_since(window_ts, now_ts)
+
+            def _make_entity_state(entity_id: str | None, label: str, minutes: float) -> EntityState:
+                eid = entity_id or f"{label}_unknown"
+                return EntityState(entity_id=eid, last_changed_minutes=minutes)
+
             observation = RLObservation(
                 device_id=device_id or "unknown",
                 indoor_temp=float(data.get("indoor_temp", 20.0)),
-                outdoor_temp=float(data.get("outdoor_temp")) if data.get("outdoor_temp") is not None else None,
+                indoor_temp_entity=_make_entity_state(data.get("indoor_temp_entity_id"), "indoor_temp", indoor_minutes),
+                outdoor_temp=float(outdoor_val) if outdoor_val is not None else None,
+                outdoor_temp_entity=(
+                    _make_entity_state(data.get("outdoor_temp_entity_id"), "outdoor_temp", outdoor_minutes)
+                    if outdoor_val is not None else None
+                ),
+                indoor_humidity=float(indoor_hum_val) if indoor_hum_val is not None else None,
+                indoor_humidity_entity=(
+                    _make_entity_state(data.get("indoor_humidity_entity_id"), "indoor_humidity", humidity_minutes)
+                    if indoor_hum_val is not None else None
+                ),
+                timestamp=indoor_ts or now_ts,
                 target_temp=float(data.get("target_temp", 20.0)),
-                is_heating_on=data.get("is_heating_on", False),
-                hour_of_day=int(data.get("hour_of_day", 12)),
-                day_of_week=int(data.get("day_of_week", 0)),
-                time_until_target_minutes=float(data.get("time_until_target_minutes")) if data.get("time_until_target_minutes") is not None else None,
+                target_temp_entity=_make_entity_state(data.get("target_temp_entity_id"), "target_temp", target_minutes),
+                time_until_target_minutes=float(data.get("time_until_target_minutes", 0.0)),
                 current_target_achieved_percentage=float(data.get("current_target_achieved_percentage")) if data.get("current_target_achieved_percentage") is not None else None,
-                indoor_humidity=float(data.get("indoor_humidity")) if data.get("indoor_humidity") is not None else None,
-                heating_output_percent=float(data.get("heating_output_percent")) if data.get("heating_output_percent") is not None else None,
-                energy_consumption_recent_kwh=float(data.get("energy_consumption_recent_kwh")) if data.get("energy_consumption_recent_kwh") is not None else None,
-                time_heating_on_recent_seconds=int(data.get("time_heating_on_recent_seconds")) if data.get("time_heating_on_recent_seconds") is not None else None,
+                is_heating_on=bool(data.get("is_heating_on", False)),
+                heating_output_percent=float(heating_output_val) if heating_output_val is not None else None,
+                heating_output_entity=(
+                    _make_entity_state(data.get("heating_output_entity_id"), "heating_output", heating_output_minutes)
+                    if heating_output_val is not None else None
+                ),
+                energy_consumption_recent_kwh=float(energy_val) if energy_val is not None else None,
+                energy_consumption_entity=(
+                    _make_entity_state(data.get("energy_consumption_entity_id"), "energy_consumption", energy_minutes)
+                    if energy_val is not None else None
+                ),
+                time_heating_on_recent_seconds=int(heating_on_val) if heating_on_val is not None else None,
+                time_heating_on_entity=(
+                    _make_entity_state(data.get("time_heating_on_entity_id"), "time_heating_on", heating_on_minutes)
+                    if heating_on_val is not None else None
+                ),
                 indoor_temp_change_15min=float(data.get("indoor_temp_change_15min")) if data.get("indoor_temp_change_15min") is not None else None,
                 outdoor_temp_change_15min=float(data.get("outdoor_temp_change_15min")) if data.get("outdoor_temp_change_15min") is not None else None,
+                day_of_week=int(data.get("day_of_week", 0)),
+                hour_of_day=int(data.get("hour_of_day", 12)),
                 outdoor_temp_forecast_1h=float(data.get("outdoor_temp_forecast_1h")) if data.get("outdoor_temp_forecast_1h") is not None else None,
                 outdoor_temp_forecast_3h=float(data.get("outdoor_temp_forecast_3h")) if data.get("outdoor_temp_forecast_3h") is not None else None,
-                window_or_door_open=data.get("window_or_door_open", False),
+                window_or_door_open=bool(window_val) if window_val is not None else False,
+                window_or_door_entity=(
+                    _make_entity_state(data.get("window_or_door_entity_id"), "window_or_door", window_minutes)
+                    if window_val is not None else None
+                ),
             )
         except (ValueError, TypeError) as e:
             return jsonify({"error": f"Invalid observation data: {str(e)}"}), 400
@@ -693,7 +795,7 @@ async def list_rl_models() -> Response:
             models = await storage.list_models()
 
         # Filter to RL models only
-        rl_models = [m for m in models if m.model_type and "RL" in m.model_type]
+        rl_models = [m for m in models if m.metrics.get("model_type") and "RL" in m.metrics.get("model_type", "")]
 
         return jsonify({
             "success": True,
@@ -701,8 +803,9 @@ async def list_rl_models() -> Response:
                 {
                     "model_id": m.model_id,
                     "device_id": m.device_id,
-                    "training_date": m.training_date.isoformat(),
-                    "model_type": m.model_type,
+                    "created_at": m.created_at.isoformat(),
+                    "training_samples": m.training_samples,
+                    "model_type": m.metrics.get("model_type", "RL_PPO"),
                     "metrics": m.metrics,
                 }
                 for m in rl_models
@@ -722,15 +825,16 @@ async def get_rl_model_info(model_id: str) -> Response:
     try:
         model_info = await storage.load_model_info(model_id)
 
-        if not model_info.model_type or "RL" not in model_info.model_type:
+        if not model_info.metrics.get("model_type") or "RL" not in model_info.metrics.get("model_type", ""):
             return jsonify({"error": "Model is not an RL model"}), 400
 
         return jsonify({
             "success": True,
             "model_id": model_info.model_id,
             "device_id": model_info.device_id,
-            "training_date": model_info.training_date.isoformat(),
-            "model_type": model_info.model_type,
+            "created_at": model_info.created_at.isoformat(),
+            "training_samples": model_info.training_samples,
+            "model_type": model_info.metrics.get("model_type", "RL_PPO"),
             "metrics": model_info.metrics,
         })
 

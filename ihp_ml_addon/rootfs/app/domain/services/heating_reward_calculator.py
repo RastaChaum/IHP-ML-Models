@@ -188,6 +188,11 @@ class HeatingRewardCalculator(IRewardCalculator):
 
         Positive reward if temperature is approaching target,
         negative reward (drift penalty) if moving away.
+        
+        IMPORTANT: This method accounts for thermal inertia by considering
+        the action taken and the current state, not just temperature changes.
+        This prevents penalizing correct actions (e.g., TURN_ON when cold)
+        when thermal inertia causes temporary temperature drops.
 
         Args:
             previous_state: Previous observation
@@ -202,13 +207,42 @@ class HeatingRewardCalculator(IRewardCalculator):
 
         # Distance improvement (positive if closer, negative if farther)
         distance_improvement = prev_distance - curr_distance
+        
+        # Check if we're below target (need heating) or above (need cooling)
+        needs_heating = current_state.indoor_temp < current_state.target_temp
+        heating_was_on = previous_state.is_heating_on
+        heating_is_on = current_state.is_heating_on
 
-        if distance_improvement > 0:
+        # THERMAL INERTIA COMPENSATION
+        # If we just turned on heating and temp is still dropping, don't penalize
+        # The inertia will cause temperature to lag behind the action by 15-30 minutes
+        if needs_heating and heating_is_on and distance_improvement < 0:
+            # We're heating correctly but temp dropped due to inertia
+            # Give a small positive reward for taking the right action
+            reward = 0.05  # Small encouragement for correct action despite inertia
+            logger.debug(
+                f"Inertia compensation: heating ON, temp dropped {distance_improvement:.2f}°C, "
+                f"but action is correct (needs_heating={needs_heating})"
+            )
+        elif needs_heating and not heating_was_on and heating_is_on:
+            # Just turned on heating when needed - reward the decision
+            reward = 0.1  # Encourage turning on when cold
+            logger.debug("Rewarding TURN_ON when temp < target")
+        elif not needs_heating and heating_was_on and not heating_is_on:
+            # Just turned off heating when not needed - reward the decision
+            reward = 0.1  # Encourage turning off when target reached
+            logger.debug("Rewarding TURN_OFF when temp >= target")
+        elif distance_improvement > 0:
             # Temperature is approaching target - positive reward
             reward = distance_improvement * self._config.progress_reward_factor
         else:
             # Temperature is moving away from target - drift penalty
-            reward = distance_improvement * self._config.drift_penalty_factor
+            # But reduce penalty if heating is on (might be thermal lag)
+            penalty_factor = self._config.drift_penalty_factor
+            if heating_is_on and needs_heating:
+                # Reduce penalty during expected thermal lag
+                penalty_factor *= 0.5
+            reward = distance_improvement * penalty_factor
 
         return reward
 

@@ -21,6 +21,9 @@ services:
     volumes:
       # Mount entire app directory for live editing (no :ro for development)
       - ./ihp_ml_addon/rootfs/app:/app
+      # Mount Poetry files for dependency management
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./poetry.lock:/app/poetry.lock:ro
       - ./test-data:/data
       # Mount tests for running tests inside container
       - ./tests:/tests
@@ -30,6 +33,7 @@ services:
       - "5678:5678"
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - LOG_DIR=/data/logs
       - MODEL_PERSISTENCE_PATH=/data/models
       - SUPERVISOR_TOKEN=${SUPERVISOR_TOKEN:-}
       - SUPERVISOR_URL=${SUPERVISOR_URL:-http://homeassistant.local:8123}
