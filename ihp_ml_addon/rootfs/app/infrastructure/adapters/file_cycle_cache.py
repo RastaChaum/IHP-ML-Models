@@ -59,8 +59,13 @@ class FileBasedCycleCache(IHeatingCycleCache):
         Returns:
             Path to the cache file
         """
-        # Sanitize device_id to avoid path traversal
-        safe_device_id = device_id.replace("/", "_").replace("\\", "_")
+        # Sanitize device_id to avoid path traversal attacks
+        # Only allow alphanumeric characters, underscores, and hyphens
+        import re
+        # Replace any non-safe character with underscore
+        safe_device_id = re.sub(r'[^a-zA-Z0-9_-]', '_', device_id)
+        # Also use basename as additional safety layer
+        safe_device_id = os.path.basename(safe_device_id)
         return self._cache_dir / f"{safe_device_id}_cycles.json"
 
     async def load_cache(self, device_id: str) -> HeatingCycleCache | None:
@@ -169,11 +174,17 @@ class FileBasedCycleCache(IHeatingCycleCache):
 
             # Write to temp file first, then rename (atomic operation)
             temp_path = cache_path.with_suffix(".tmp")
-            with temp_path.open("w") as f:
-                json.dump(data, f, indent=2)
+            try:
+                with temp_path.open("w") as f:
+                    json.dump(data, f, indent=2)
 
-            temp_path.replace(cache_path)
-            _LOGGER.debug("Cache saved successfully to: %s", cache_path)
+                temp_path.replace(cache_path)
+                _LOGGER.debug("Cache saved successfully to: %s", cache_path)
+            except Exception:
+                # Clean up temp file on failure
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise
 
         except (OSError, IOError) as e:
             _LOGGER.error("Failed to save cache for device %s: %s", cache.device_id, e)

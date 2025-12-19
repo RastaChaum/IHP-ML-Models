@@ -18,13 +18,13 @@ class TestFileBasedCycleCache:
     """Tests for FileBasedCycleCache adapter."""
 
     @pytest.fixture
-    async def cache_dir(self) -> Path:
+    def cache_dir(self) -> Path:
         """Create a temporary directory for cache files."""
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
 
     @pytest.fixture
-    async def cache(self, cache_dir: Path) -> FileBasedCycleCache:
+    def cache(self, cache_dir: Path) -> FileBasedCycleCache:
         """Create a file-based cache instance."""
         return FileBasedCycleCache(cache_dir=str(cache_dir))
 
@@ -318,11 +318,16 @@ class TestFileBasedCycleCache:
         """Test that device_id with path separators is sanitized."""
         cache = FileBasedCycleCache(cache_dir=str(cache_dir))
 
-        # Device ID with path separators
+        # Device ID with path separators and special characters
         malicious_id = "../../../etc/passwd"
         cache_path = cache._get_cache_path(malicious_id)
 
-        # Should be sanitized - path should be within cache_dir and separators replaced
+        # Should be sanitized - all special chars replaced with underscores
+        # Path should be within cache_dir
         assert str(cache_path).startswith(str(cache_dir))
-        # The ".." should be replaced with "_" in the filename
-        assert cache_path.name == ".._.._.._etc_passwd_cycles.json"
+        # The filename should only contain safe characters (alphanumeric, _, -)
+        filename = cache_path.name
+        # All path separators and dots should be replaced
+        assert "/" not in filename
+        assert "\\" not in filename
+        assert ".." not in filename
