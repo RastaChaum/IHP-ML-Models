@@ -6,6 +6,7 @@ The domain depends on these abstractions, not on concrete implementations.
 
 from .experience_replay_buffer import IExperienceReplayBuffer
 from .ha_history_reader import IHomeAssistantHistoryReader
+from .heating_cycle_cache import IHeatingCycleCache
 from .ml_model_predictor import IMLModelPredictor
 from .ml_model_trainer import IMLModelTrainer
 from .model_storage import IModelStorage
@@ -15,6 +16,7 @@ from .rl_model_trainer import IRLModelTrainer
 
 __all__ = [
     "IExperienceReplayBuffer",
+    "IHeatingCycleCache",
     "IHomeAssistantHistoryReader",
     "IMLModelPredictor",
     "IMLModelTrainer",
