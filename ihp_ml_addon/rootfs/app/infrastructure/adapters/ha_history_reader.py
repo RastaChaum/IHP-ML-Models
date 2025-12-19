@@ -12,7 +12,7 @@ For a production system with high concurrency, consider using aiohttp.
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import urljoin
 
 import requests
@@ -23,6 +23,7 @@ from domain.services import RLActionService, RLEpisodeService
 from domain.value_objects import (
     EntityState,
     HeatingActionType,
+    HeatingCycle,
     RLAction,
     RLExperience,
     RLObservation,
@@ -31,6 +32,9 @@ from domain.value_objects import (
     TrainingRequest,
     get_week_of_month,
 )
+
+if TYPE_CHECKING:
+    from domain.interfaces import IHeatingCycleCache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +59,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         episode_service: RLEpisodeService | None = None,
         use_ihp_api: bool = False,
         ihp_api_url: str | None = None,
+        cycle_cache: "IHeatingCycleCache | None" = None,
     ) -> None:
         """Initialize the Home Assistant history reader.
 
@@ -65,6 +70,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             reward_calculator: Optional reward calculator for RL experience construction
             action_service: Optional action inference service (defaults to new instance)
             episode_service: Optional episode termination service (defaults to new instance)
+            use_ihp_api: Whether to use IHP API for cycle extraction
+            ihp_api_url: IHP API URL for cycle extraction
+            cycle_cache: Optional cycle cache for incremental cycle detection
         """
         # Default to Supervisor API for addons
         self._ha_url = ha_url or os.getenv(
@@ -73,6 +81,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self._ha_token = ha_token or os.getenv("SUPERVISOR_TOKEN", "")
         self._timeout = timeout
         self._reward_calculator = reward_calculator
+        self._cycle_cache = cycle_cache
         
         # IHP API configuration
         self._use_ihp_api = use_ihp_api
@@ -83,6 +92,9 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self._episode_service = episode_service or RLEpisodeService()
 
         _LOGGER.info("HA History Reader initialized with URL: %s", self._ha_url)
+        if self._cycle_cache:
+            _LOGGER.info("Incremental cycle caching enabled")
+
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for Home Assistant API requests."""
@@ -135,10 +147,20 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         start_time: datetime,
         end_time: datetime,
         cycle_split_duration_minutes: int | None = None,
+        device_id: str | None = None,
+        retention_days: int = 30,
     ) -> TrainingData:
         """Fetch historical data and convert to training data.
 
-        This method:
+        This method supports incremental cycle caching when a cache is configured.
+        If caching is enabled:
+        1. Loads existing cache (if any)
+        2. Fetches only new data since last scan
+        3. Merges new cycles with cached cycles
+        4. Saves updated cache
+        5. Returns training data from all cycles (cached + new)
+
+        If caching is disabled:
         1. Fetches history for all specified entities
         2. Aligns timestamps across sensors
         3. Identifies heating cycles (when heating turned on/off)
@@ -157,10 +179,28 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             cycle_split_duration_minutes: Optional duration in minutes to split
                 long heating cycles into smaller sub-cycles. If None, cycles
                 are not split.
+            device_id: Device identifier for cache lookup (required if caching enabled)
+            retention_days: Number of days to retain cycles in cache
 
         Returns:
             TrainingData with extracted heating cycles
         """
+        # If cache is enabled and device_id provided, use incremental caching
+        if self._cycle_cache and device_id:
+            return await self._fetch_training_data_with_cache(
+                device_id=device_id,
+                indoor_temp_entity_id=indoor_temp_entity_id,
+                outdoor_temp_entity_id=outdoor_temp_entity_id,
+                target_temp_entity_id=target_temp_entity_id,
+                heating_state_entity_id=heating_state_entity_id,
+                humidity_entity_id=humidity_entity_id,
+                start_time=start_time,
+                end_time=end_time,
+                cycle_split_duration_minutes=cycle_split_duration_minutes,
+                retention_days=retention_days,
+            )
+
+        # Otherwise, use traditional full scan
         entity_ids = [
             indoor_temp_entity_id,
             outdoor_temp_entity_id,
@@ -855,6 +895,181 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     closest_value = value
 
         return closest_value
+
+    async def _fetch_training_data_with_cache(
+        self,
+        device_id: str,
+        indoor_temp_entity_id: str,
+        outdoor_temp_entity_id: str,
+        target_temp_entity_id: str,
+        heating_state_entity_id: str,
+        humidity_entity_id: str | None,
+        start_time: datetime,
+        end_time: datetime,
+        cycle_split_duration_minutes: int | None,
+        retention_days: int,
+    ) -> TrainingData:
+        """Fetch training data using incremental cycle caching.
+
+        This method:
+        1. Loads existing cache (if any)
+        2. Determines incremental scan range (last_scan_time to end_time)
+        3. Fetches only new data since last scan
+        4. Extracts new cycles
+        5. Merges with cache and prunes old cycles
+        6. Returns TrainingData from all cycles
+
+        Args:
+            device_id: Device identifier for cache lookup
+            indoor_temp_entity_id: Entity ID for indoor temperature
+            outdoor_temp_entity_id: Entity ID for outdoor temperature
+            target_temp_entity_id: Entity ID for target temperature
+            heating_state_entity_id: Entity ID for heating state
+            humidity_entity_id: Entity ID for humidity (optional)
+            start_time: Start of requested time range
+            end_time: End of requested time range
+            cycle_split_duration_minutes: Optional cycle splitting duration
+            retention_days: Number of days to retain cycles in cache
+
+        Returns:
+            TrainingData with all cycles (cached + new)
+        """
+        _LOGGER.info("Using incremental cycle caching for device: %s", device_id)
+
+        # Load existing cache
+        cached_cycles = await self._cycle_cache.load_cache(device_id)  # type: ignore
+
+        # Determine what time range to scan
+        if cached_cycles:
+            # Incremental scan: from last scan to now
+            scan_start = cached_cycles.last_scan_time
+            _LOGGER.info(
+                "Found existing cache with %d cycles, scanning from %s to %s",
+                cached_cycles.size,
+                scan_start.isoformat(),
+                end_time.isoformat(),
+            )
+        else:
+            # Full scan: use requested start_time
+            scan_start = start_time
+            _LOGGER.info(
+                "No existing cache, performing full scan from %s to %s",
+                scan_start.isoformat(),
+                end_time.isoformat(),
+            )
+
+        # Fetch history for the incremental range
+        entity_ids = [
+            indoor_temp_entity_id,
+            outdoor_temp_entity_id,
+            target_temp_entity_id,
+            heating_state_entity_id,
+        ]
+        if humidity_entity_id:
+            entity_ids.append(humidity_entity_id)
+
+        history_data = await self._fetch_history(entity_ids, scan_start, end_time)
+
+        # Extract new cycles from the incremental range
+        new_data_points = self._extract_heating_cycles(
+            history_data,
+            indoor_temp_entity_id,
+            outdoor_temp_entity_id,
+            target_temp_entity_id,
+            heating_state_entity_id,
+            humidity_entity_id,
+            cycle_split_duration_minutes,
+        )
+
+        # Convert TrainingDataPoints to HeatingCycles
+        new_cycles = [
+            self._training_point_to_heating_cycle(point, device_id)
+            for point in new_data_points
+        ]
+
+        _LOGGER.info("Extracted %d new cycles from incremental scan", len(new_cycles))
+
+        # Merge with cache and save
+        updated_cache = await self._cycle_cache.add_cycles(  # type: ignore
+            device_id=device_id,
+            new_cycles=new_cycles,
+            last_scan_time=end_time,
+            retention_days=retention_days,
+        )
+
+        _LOGGER.info(
+            "Cache updated: %d total cycles after merge and pruning",
+            updated_cache.size,
+        )
+
+        # Filter cycles to requested time range
+        cycles_in_range = updated_cache.get_cycles_in_range(start_time, end_time)
+        _LOGGER.info(
+            "Returning %d cycles in requested range (%s to %s)",
+            len(cycles_in_range),
+            start_time.isoformat(),
+            end_time.isoformat(),
+        )
+
+        # Convert back to TrainingDataPoints
+        training_points = [
+            self._heating_cycle_to_training_point(cycle) for cycle in cycles_in_range
+        ]
+
+        return TrainingData.from_sequence(training_points)
+
+    def _training_point_to_heating_cycle(
+        self, point: TrainingDataPoint, device_id: str
+    ) -> HeatingCycle:
+        """Convert a TrainingDataPoint to a HeatingCycle.
+
+        Args:
+            point: TrainingDataPoint to convert
+            device_id: Device identifier
+
+        Returns:
+            HeatingCycle instance
+        """
+        # Calculate end time from start time and duration
+        end_time = point.timestamp + timedelta(minutes=point.heating_duration_minutes)
+
+        # Generate cycle ID
+        cycle_id = HeatingCycle.generate_cycle_id(device_id, point.timestamp)
+
+        return HeatingCycle(
+            cycle_id=cycle_id,
+            device_id=device_id,
+            start_time=point.timestamp,
+            end_time=end_time,
+            start_indoor_temp=point.indoor_temp,
+            end_indoor_temp=point.target_temp,  # Approximation
+            target_temp=point.target_temp,
+            outdoor_temp=point.outdoor_temp,
+            humidity=point.humidity,
+            duration_minutes=point.heating_duration_minutes,
+            hour_of_day=point.hour_of_day,
+            minutes_since_last_cycle=point.minutes_since_last_cycle,
+        )
+
+    def _heating_cycle_to_training_point(self, cycle: HeatingCycle) -> TrainingDataPoint:
+        """Convert a HeatingCycle to a TrainingDataPoint.
+
+        Args:
+            cycle: HeatingCycle to convert
+
+        Returns:
+            TrainingDataPoint instance
+        """
+        return TrainingDataPoint(
+            outdoor_temp=cycle.outdoor_temp,
+            indoor_temp=cycle.start_indoor_temp,
+            target_temp=cycle.target_temp,
+            humidity=cycle.humidity,
+            hour_of_day=cycle.hour_of_day,
+            heating_duration_minutes=cycle.duration_minutes,
+            timestamp=cycle.start_time,
+            minutes_since_last_cycle=cycle.minutes_since_last_cycle,
+        )
 
     async def fetch_rl_experiences(
         self,
