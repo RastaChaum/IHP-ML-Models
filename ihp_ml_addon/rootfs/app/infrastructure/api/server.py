@@ -60,6 +60,19 @@ storage = FileModelStorage(model_path)
 trainer = XGBoostTrainer(storage)
 predictor = XGBoostPredictor(storage)
 
+# Initialize cycle cache for incremental cycle detection
+# Cache is optional - if disabled, full scans will be performed
+cycle_cache = None
+cache_enabled = os.getenv("CYCLE_CACHE_ENABLED", "true").lower() == "true"
+if cache_enabled:
+    from infrastructure.adapters.file_cycle_cache import FileBasedCycleCache
+    
+    cache_dir = Path(os.getenv("CYCLE_CACHE_PATH", "/data/cycle_cache"))
+    cycle_cache = FileBasedCycleCache(cache_dir=str(cache_dir))
+    _LOGGER.info("Cycle cache enabled at: %s", cache_dir)
+else:
+    _LOGGER.info("Cycle cache disabled - using full history scans")
+
 # Initialize RL services (if available)
 try:
     # Use a 5k capacity per device; MemoryReplayBuffer exposes a single max_capacity parameter
@@ -96,7 +109,8 @@ if supervisor_token:
     ha_history_reader = HomeAssistantHistoryReader(
         ha_url=supervisor_url,
         ha_token=supervisor_token,
-        reward_calculator=reward_calculator
+        reward_calculator=reward_calculator,
+        cycle_cache=cycle_cache,
     )
     _LOGGER.info("Home Assistant integration enabled")
     
