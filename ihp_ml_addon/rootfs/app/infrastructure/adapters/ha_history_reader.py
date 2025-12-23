@@ -606,7 +606,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             final_temp = end_temp if end_temp is not None else start_target_temp
 
             # Check if we should split this cycle
-            # Treat 0 as None (no splitting) for backward compatibility
+            # Treat 0 as None (no splitting) for backward compatibility with historical data
+            # This prevents division by zero and handles cases where 0 was used instead of None
             if (
                 cycle_split_duration_minutes is not None
                 and cycle_split_duration_minutes > 0
