@@ -325,12 +325,14 @@ class TrainingRequest:
     """
 
     device_id: str
-    device_name: str | None = None
     
     # Required entity IDs
     indoor_temp_entity_id: str
     target_temp_entity_id: str
     heating_state_entity_id: str
+
+    # Optional fields
+    device_name: str | None = None
 
     # Time range (start_time can be None for default window, end_time defaults to now)
     start_time: datetime | None = None

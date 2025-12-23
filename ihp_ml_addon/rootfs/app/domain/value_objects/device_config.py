@@ -30,11 +30,11 @@ class DeviceConfig:
     """
 
     device_id: str
-    device_name: str | None = None
     indoor_temp_entity_id: str
     outdoor_temp_entity_id: str
     target_temp_entity_id: str
     heating_state_entity_id: str
+    device_name: str | None = None
     humidity_entity_id: str | None = None
     history_days: int = 30
     cycle_split_duration_minutes: int | None = None
