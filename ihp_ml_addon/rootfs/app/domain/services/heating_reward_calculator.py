@@ -29,7 +29,7 @@ class HeatingRewardCalculator(IRewardCalculator):
             config: Reward configuration. If None, uses default values.
         """
         self._config = config or RewardConfig()
-        logger.info(
+        logger.debug(
             "Initialized HeatingRewardCalculator with config: "
             f"progress_factor={self._config.progress_reward_factor}, "
             f"drift_penalty={self._config.drift_penalty_factor}, "
@@ -59,8 +59,9 @@ class HeatingRewardCalculator(IRewardCalculator):
         Returns:
             Reward value (can be positive or negative)
         """
+        device_name = current_state.device_name or current_state.device_id
         logger.debug(
-            f"Calculating reward for device {current_state.device_id}, "
+            f"Calculating reward for device '{device_name}' (ID: {current_state.device_id}), "
             f"action={action.action_type}, "
             f"prev_temp={previous_state.indoor_temp:.2f}, "
             f"curr_temp={current_state.indoor_temp:.2f}, "
@@ -119,8 +120,9 @@ class HeatingRewardCalculator(IRewardCalculator):
         # Determine timing (negative = early, 0 = on time, positive = late)
         time_delta = final_state.time_until_target_minutes
 
-        logger.info(
-            f"Calculating terminal reward for device {final_state.device_id}: "
+        device_name = final_state.device_name or final_state.device_id
+        logger.debug(
+            f"Calculating terminal reward for device '{device_name}' (ID: {final_state.device_id}): "
             f"temp_achieved={temp_achieved}, "
             f"temp_diff={temp_diff:.2f}°C, "
             f"time_delta={time_delta:.1f}min, "
@@ -178,7 +180,10 @@ class HeatingRewardCalculator(IRewardCalculator):
         reward -= total_energy_penalty
         logger.debug(f"Total energy penalty: {total_energy_penalty:.3f}")
 
-        logger.info(f"Total terminal reward: {reward:.3f}")
+        logger.info(
+            f"Episode completed for device '{device_name}' - "
+            f"Terminal reward: {reward:.3f} (temp_achieved={temp_achieved}, timing={time_delta:.1f}min)"
+        )
         return reward
 
     def _calculate_progress_reward(

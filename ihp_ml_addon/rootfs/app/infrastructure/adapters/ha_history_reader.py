@@ -76,7 +76,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         self._action_service = action_service or RLActionService()
         self._episode_service = episode_service or RLEpisodeService()
 
-        _LOGGER.info("HA History Reader initialized with URL: %s", self._ha_url)
+        _LOGGER.debug("HA History Reader initialized with URL: %s", self._ha_url)
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for Home Assistant API requests."""
@@ -91,32 +91,31 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         Returns:
             True if the addon can communicate with Home Assistant
         """
-        _LOGGER.info("=" * 60)
-        _LOGGER.info("Checking Home Assistant availability")
-        _LOGGER.info("Base URL: %s", self._ha_url)
-        _LOGGER.info("Token configured: %s", "YES" if self._ha_token else "NO")
-        _LOGGER.info("Token length: %d", len(self._ha_token) if self._ha_token else 0)
+        _LOGGER.debug("is_available() called")
+        _LOGGER.debug("Base URL: %s", self._ha_url)
+        _LOGGER.debug("Token configured: %s", "YES" if self._ha_token else "NO")
         
         try:
             # Ensure base URL ends with / for proper urljoin behavior
             base_url = self._ha_url if self._ha_url.endswith('/') else f"{self._ha_url}/"
             url = urljoin(base_url, "api/")
-            _LOGGER.info("Final URL after urljoin: %s", url)
-            _LOGGER.debug("Request headers: %s", {k: v[:20] + "..." if k == "Authorization" and len(v) > 20 else v for k, v in self._get_headers().items()})
+            _LOGGER.debug("Final URL after urljoin: %s", url)
             
             response = requests.get(
                 url,
                 headers=self._get_headers(),
                 timeout=self._timeout,
             )
-            _LOGGER.info("Response status: %d", response.status_code)
-            _LOGGER.debug("Response body: %s", response.text[:200] if response.text else "(empty)")
-            _LOGGER.info("=" * 60)
-            return response.status_code == 200
+            _LOGGER.debug("Response status: %d", response.status_code)
+            
+            is_available = response.status_code == 200
+            if is_available:
+                _LOGGER.info("Home Assistant API is available")
+            else:
+                _LOGGER.warning("Home Assistant API returned status %d", response.status_code)
+            return is_available
         except requests.RequestException as e:
-            _LOGGER.error("Home Assistant API error: %s", e)
-            _LOGGER.error("Error type: %s", type(e).__name__)
-            _LOGGER.info("=" * 60)
+            _LOGGER.error("Home Assistant API connection error: %s", e)
             return False
 
     async def fetch_training_data(
@@ -182,7 +181,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             raise ValueError("No valid heating cycles found in historical data")
 
         _LOGGER.info(
-            "Extracted %d training data points from %s to %s",
+            "Extracted %d training data points from history (%s to %s)",
             len(data_points),
             start_time.isoformat(),
             end_time.isoformat(),
@@ -219,8 +218,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             return await self._fetch_history_chunk(entity_ids, start_time, end_time)
         
         # Otherwise, split into weekly chunks to avoid HA API limits
-        _LOGGER.info(
-            "Fetching %d days of history in chunks to avoid API limits...",
+        _LOGGER.debug(
+            "Fetching %d days of history in weekly chunks to avoid API limits",
             total_days,
         )
         
@@ -264,13 +263,14 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 result[entity_id],
                 key=lambda x: x.get("last_changed") or x.get("last_updated") or "",
             )
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Entity %s: %d total records after merging %d chunks",
                 entity_id,
                 len(result[entity_id]),
                 chunk_num,
             )
         
+        _LOGGER.info("Fetched history for %d entities (%d total chunks)", len(result), chunk_num)
         return result
 
     async def _fetch_history_chunk(
@@ -429,6 +429,8 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         _LOGGER.debug("  Outdoor temp: %s (climate=%s)", outdoor_temp_entity_id, outdoor_is_climate)
         _LOGGER.debug("  Target temp: %s (climate=%s)", target_temp_entity_id, target_is_climate)
         _LOGGER.debug("  Heating state: %s (climate=%s)", heating_state_entity_id, heating_is_climate)
+        if cycle_split_duration_minutes:
+            _LOGGER.debug("  Cycle split duration: %d minutes", cycle_split_duration_minutes)
 
         # Track heating cycles
         heating_start: datetime | None = None
@@ -712,7 +714,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                     record_cycle(timestamp, end_temp=current_indoor)
                     reset_cycle()
 
-        _LOGGER.info("Extracted %d heating cycles", len(data_points))
+        _LOGGER.info("Extracted %d heating cycles from history", len(data_points))
         return data_points
 
     def _get_value_at_time(
@@ -788,9 +790,10 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             ConnectionError: If unable to connect to Home Assistant
             ValueError: If entity IDs are invalid or no data available
         """
-        _LOGGER.info(
-            "Fetching RL experiences for device %s from %s to %s",
-            training_request.device_id,
+        device_display = f"'{training_request.device_id}'"
+        _LOGGER.debug(
+            "fetch_rl_experiences() called for device %s from %s to %s",
+            device_display,
             training_request.start_time,
             training_request.end_time,
         )
@@ -844,7 +847,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
         _LOGGER.info(
             "Extracted %d RL experiences for device %s",
             len(experiences),
-            training_request.device_id,
+            device_display,
         )
 
         return experiences
@@ -929,7 +932,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
             except ValueError as e:
                 _LOGGER.debug("Skipping invalid RL experience: %s", e)
 
-        _LOGGER.info("Created %d RL experiences", len(experiences))
+        _LOGGER.info("Created %d RL experiences from sampled observations", len(experiences))
         return experiences
 
     def _sample_observations(
@@ -1195,6 +1198,7 @@ class HomeAssistantHistoryReader(IHomeAssistantHistoryReader):
                 window_or_door_open=window_or_door_open,
                 window_or_door_entity=window_or_door_entity,
                 device_id=training_request.device_id,
+                device_name=training_request.device_name,
             )
             return observation
         except ValueError as e:

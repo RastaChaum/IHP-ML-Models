@@ -103,6 +103,7 @@ class RLObservation:
 
         # Identifier
         device_id: Zone/device identifier being controlled
+        device_name: Human-readable name for the device (from Home Assistant, optional)
     """
 
     # Temperatures and Environmental Conditions
@@ -145,6 +146,7 @@ class RLObservation:
 
     # Identifier
     device_id: str
+    device_name: str | None = None
 
     def __post_init__(self) -> None:
         """Validate observation values."""
@@ -299,6 +301,7 @@ class TrainingRequest:
 
     Attributes:
         device_id: Device/zone identifier to train model for
+        device_name: Human-readable name for the device (from Home Assistant, optional)
         start_time: Start of historical period to fetch (None = use default history window)
         end_time: End of historical period to fetch (defaults to now)
 
@@ -322,6 +325,7 @@ class TrainingRequest:
     """
 
     device_id: str
+    device_name: str | None = None
     
     # Required entity IDs
     indoor_temp_entity_id: str

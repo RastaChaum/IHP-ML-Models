@@ -242,6 +242,7 @@ async def train_with_device_config() -> Response:
     Request body:
     {
         "device_id": str,
+        "device_name": str (optional - human-readable name from Home Assistant),
         "indoor_temp_entity_id": str,
         "outdoor_temp_entity_id": str,
         "target_temp_entity_id": str,
@@ -289,6 +290,7 @@ async def train_with_device_config() -> Response:
 
             device_config = DeviceConfig(
                 device_id=data.get("device_id", ""),
+                device_name=data.get("device_name"),
                 indoor_temp_entity_id=data.get("indoor_temp_entity_id", ""),
                 outdoor_temp_entity_id=data.get("outdoor_temp_entity_id", ""),
                 target_temp_entity_id=data.get("target_temp_entity_id", ""),

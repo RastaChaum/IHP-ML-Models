@@ -68,16 +68,19 @@ class MLApplicationService:
         Returns:
             Information about the trained model
         """
-        _LOGGER.info(
-            "Starting model training with %d samples (device: %s)",
+        device_display = f"'{device_id}'" if device_id else "global"
+        _LOGGER.debug(
+            "train_with_data() called: %d samples for device %s",
             training_data.size,
-            device_id,
+            device_display,
         )
         model_info = await self._prediction_service.train_model(training_data, device_id)
         _LOGGER.info(
-            "Model training completed: %s, metrics: %s",
+            "Model training completed for device %s: model_id=%s, RMSE=%.2f, R2=%.3f",
+            device_display,
             model_info.model_id,
-            model_info.metrics,
+            model_info.metrics.get('rmse', 0),
+            model_info.metrics.get('r2', 0),
         )
         return model_info
 
@@ -93,7 +96,7 @@ class MLApplicationService:
         Returns:
             Information about the trained model
         """
-        _LOGGER.info("Generating %d fake training samples", num_samples)
+        _LOGGER.debug("train_with_fake_data() called: %d samples", num_samples)
         training_data = self._fake_data_generator.generate(num_samples)
         return await self.train_with_data(training_data)
 
@@ -120,14 +123,16 @@ class MLApplicationService:
                 "Cannot train with device configuration."
             )
 
-        _LOGGER.info(
-            "Training model for device %s using %d days of history",
-            device_config.device_id,
+        device_display = f"'{device_config.device_name}'" if device_config.device_name else f"ID:{device_config.device_id}"
+        _LOGGER.debug(
+            "train_with_device_config() called for device %s: %d days of history",
+            device_display,
             device_config.history_days,
         )
         if device_config.cycle_split_duration_minutes:
-            _LOGGER.info(
-                "Cycle splitting enabled: splitting cycles longer than %d minutes",
+            _LOGGER.debug(
+                "Cycle splitting enabled for device %s: %d minutes threshold",
+                device_display,
                 device_config.cycle_split_duration_minutes,
             )
 
@@ -150,7 +155,7 @@ class MLApplicationService:
         _LOGGER.info(
             "Fetched %d training samples from Home Assistant for device %s",
             training_data.size,
-            device_config.device_id,
+            device_display,
         )
 
         return await self.train_with_data(training_data, device_id=device_config.device_id)
@@ -263,5 +268,6 @@ class MLApplicationService:
         Args:
             model_id: Model ID to delete
         """
-        _LOGGER.info("Deleting model: %s", model_id)
+        _LOGGER.debug("delete_model() called: %s", model_id)
         await self._storage.delete_model(model_id)
+        _LOGGER.info("Model deleted: %s", model_id)

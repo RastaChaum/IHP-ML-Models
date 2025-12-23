@@ -88,7 +88,8 @@ class FileModelStorage(IModelStorage):
             # Update index
             await self._update_index(model_id, info.created_at, info.device_id)
 
-            _LOGGER.info("Model saved: %s (device: %s)", model_id, info.device_id)
+            device_display = f"'{info.device_id}'" if info.device_id else "global"
+            _LOGGER.info("Model saved for device %s: %s", device_display, model_id)
 
         except (OSError, pickle.PickleError) as e:
             raise StorageError(f"Failed to save model {model_id}: {e}") from e

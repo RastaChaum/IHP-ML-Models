@@ -83,7 +83,14 @@ class XGBoostTrainer(IMLModelTrainer):
             model_id = f"xgb_{device_id}_{uuid.uuid4().hex[:8]}"
         else:
             model_id = f"xgb_{uuid.uuid4().hex[:8]}"
-        _LOGGER.info("Training new XGBoost model: %s (device: %s)", model_id, device_id)
+        
+        device_display = f"'{device_id}'" if device_id else "global"
+        _LOGGER.debug(
+            "train() called: model_id=%s, device=%s, samples=%d",
+            model_id,
+            device_display,
+            training_data.size,
+        )
 
         # Prepare features and labels
         X, y = self._prepare_data(training_data)
@@ -111,7 +118,13 @@ class XGBoostTrainer(IMLModelTrainer):
             "validation_samples": len(X_val),
         }
 
-        _LOGGER.info("Model %s trained with metrics: %s", model_id, metrics)
+        _LOGGER.info(
+            "XGBoost model trained for device %s: model_id=%s, RMSE=%.2f, R2=%.3f",
+            device_display,
+            model_id,
+            metrics['rmse'],
+            metrics['r2'],
+        )
 
         # Create model info
         model_info = ModelInfo(
@@ -144,7 +157,7 @@ class XGBoostTrainer(IMLModelTrainer):
         Returns:
             ModelInfo with details about the retrained model
         """
-        _LOGGER.info("Retraining model %s with %d new samples", model_id, training_data.size)
+        _LOGGER.debug("retrain() called: model_id=%s, new_samples=%d", model_id, training_data.size)
 
         # Load existing model to verify it exists
         await self._storage.load_model(model_id)

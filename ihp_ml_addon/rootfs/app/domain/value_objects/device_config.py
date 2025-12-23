@@ -17,6 +17,7 @@ class DeviceConfig:
 
     Attributes:
         device_id: Unique identifier for this IHP device
+        device_name: Human-readable name for this IHP device (from Home Assistant)
         indoor_temp_entity_id: Entity ID for indoor temperature sensor
         outdoor_temp_entity_id: Entity ID for outdoor temperature sensor
         humidity_entity_id: Entity ID for humidity sensor (optional)
@@ -29,6 +30,7 @@ class DeviceConfig:
     """
 
     device_id: str
+    device_name: str | None = None
     indoor_temp_entity_id: str
     outdoor_temp_entity_id: str
     target_temp_entity_id: str

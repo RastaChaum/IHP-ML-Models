@@ -31,7 +31,7 @@ class RLEpisodeService:
         self._target_tolerance = target_tolerance_celsius
         self._target_change_threshold = target_change_threshold_celsius
 
-        logger.info(
+        logger.debug(
             "RLEpisodeService initialized: tolerance=%.2f°C, change_threshold=%.2f°C",
             self._target_tolerance,
             self._target_change_threshold,
