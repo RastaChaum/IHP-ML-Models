@@ -162,18 +162,6 @@ class TestDeviceConfig:
         )
         assert config.cycle_split_duration_minutes is None
 
-    def test_device_config_cycle_split_duration_zero_converted_to_none(self) -> None:
-        """Test that cycle_split_duration_minutes=0 is converted to None for backward compatibility."""
-        config = DeviceConfig(
-            device_id="ihp_test",
-            indoor_temp_entity_id="sensor.temp",
-            outdoor_temp_entity_id="sensor.outdoor",
-            target_temp_entity_id="climate.vtherm",
-            heating_state_entity_id="climate.vtherm",
-            cycle_split_duration_minutes=0,
-        )
-        assert config.cycle_split_duration_minutes is None
-
     def test_device_config_cycle_split_duration_too_low_raises_error(self) -> None:
         """Test that cycle_split_duration_minutes < 10 raises ValueError."""
         with pytest.raises(ValueError, match="cycle_split_duration_minutes must be at least 10"):

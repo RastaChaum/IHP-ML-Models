@@ -25,7 +25,7 @@ class DeviceConfig:
         history_days: Number of days of history to fetch for training
         cycle_split_duration_minutes: Optional duration in minutes to split long
             heating cycles into smaller sub-cycles for more training data.
-            If None or 0, cycles are not split. Must be at least 10 minutes if set.
+            If None, cycles are not split. Must be at least 10 minutes if set.
     """
 
     device_id: str
@@ -53,12 +53,6 @@ class DeviceConfig:
             raise ValueError(f"history_days must be at least 1, got {self.history_days}")
         if self.history_days > 365:
             raise ValueError(f"history_days must be at most 365, got {self.history_days}")
-        
-        # Normalize: treat 0 as None for backward compatibility
-        # This handles historical cached data that may have 0 instead of None
-        if self.cycle_split_duration_minutes == 0:
-            object.__setattr__(self, 'cycle_split_duration_minutes', None)
-        
         if self.cycle_split_duration_minutes is not None:
             if self.cycle_split_duration_minutes < 10:
                 raise ValueError(

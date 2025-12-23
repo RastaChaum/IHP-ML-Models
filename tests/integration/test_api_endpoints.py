@@ -291,25 +291,6 @@ class TestTrainDeviceEndpoint:
         data = json.loads(response.data)
         assert data["success"] is True
 
-    def test_train_with_device_config_cycle_split_zero(
-        self, 
-        client: Any, 
-        sample_device_config: Dict[str, Any]
-    ) -> None:
-        """Training with cycle_split_duration_minutes=0 should work (treated as None)."""
-        config = sample_device_config.copy()
-        config["cycle_split_duration_minutes"] = 0
-        
-        response = client.post(
-            "/api/v1/train/device",
-            json=config,
-            content_type="application/json"
-        )
-        
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data["success"] is True
-
 
 class TestPredictEndpoint:
     """Tests for the /api/v1/predict endpoint."""
