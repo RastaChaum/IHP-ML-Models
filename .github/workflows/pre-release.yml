@@ -1,0 +1,90 @@
+name: Pre-Release (Integration)
+
+on:
+  push:
+    branches:
+      - integration
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-pre-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION-beta" >> $GITHUB_OUTPUT
+
+      - name: Extract unreleased changes from CHANGELOG
+        id: changelog
+        run: |
+          # Extraction de la section Unreleased du CHANGELOG
+          CHANGELOG_CONTENT=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | sed '1d;$d')
+          
+          # Si vide, message par défaut
+          if [ -z "$CHANGELOG_CONTENT" ]; then
+            CHANGELOG_CONTENT="Aucun changement documenté pour cette pré-release."
+          fi
+          
+          # Sauvegarde dans un fichier pour éviter les problèmes d'échappement
+          echo "$CHANGELOG_CONTENT" > /tmp/release-notes.md
+          
+      - name: Check if documentation needs update
+        id: docs-check
+        run: |
+          # Vérification basique : si feature ajoutée, docs doivent être modifiées
+          FEATURES=$(grep -c "### Added" /tmp/release-notes.md || echo "0")
+          DOCS_CHANGED=$(git diff origin/main --name-only | grep -E '(README.md|QUICKSTART.md|docs/)' | wc -l)
+          
+          if [ "$FEATURES" -gt "0" ] && [ "$DOCS_CHANGED" -eq "0" ]; then
+            echo "warning=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Nouvelles fonctionnalités détectées sans mise à jour de documentation"
+          else
+            echo "warning=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update pre-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          
+          # Suppression de l'ancienne pre-release si elle existe
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          
+          # Création de la nouvelle pre-release
+          gh release create "$TAG" \
+            --title "🧪 Pre-Release ${{ steps.version.outputs.version }}" \
+            --notes-file /tmp/release-notes.md \
+            --prerelease \
+            --target integration
+
+      - name: Comment on warning if docs not updated
+        if: steps.docs-check.outputs.warning == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Trouve la dernière PR mergée dans integration
+          LAST_PR=$(gh pr list --state merged --base integration --limit 1 --json number --jq '.[0].number')
+          
+          if [ -n "$LAST_PR" ]; then
+            gh pr comment "$LAST_PR" --body "⚠️ **Documentation Warning**
+            
+            Nouvelles fonctionnalités ajoutées mais aucune mise à jour de documentation détectée.
+            Veuillez vérifier et mettre à jour :
+            - README.md (guide utilisateur)
+            - QUICKSTART.md (démarrage rapide)
+            - docs/ (documentation technique si nécessaire)
+            "
+          fi

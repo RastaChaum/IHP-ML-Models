@@ -1,0 +1,65 @@
+# Configuration Dependabot pour mises à jour automatiques des dépendances
+
+version: 2
+updates:
+  # Mises à jour Python/Poetry
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    target-branch: "integration"
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "automated"
+    reviewers:
+      - "RastaChaum"
+    # Grouper les mises à jour mineures ensemble
+    groups:
+      minor-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # Ignorer certaines dépendances si nécessaire
+    ignore:
+      # Exemple: ignorer les mises à jour majeures de certaines libs
+      # - dependency-name: "numpy"
+      #   update-types: ["version-update:semver-major"]
+
+  # Mises à jour GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    target-branch: "integration"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "ci"
+      - "automated"
+    reviewers:
+      - "RastaChaum"
+
+  # Mises à jour Docker
+  - package-ecosystem: "docker"
+    directory: "/ihp_ml_addon"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    target-branch: "integration"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "docker"
+      - "automated"
+    reviewers:
+      - "RastaChaum"
