@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Add and test workflow
 
 ### Fixed
 - Fixed Home Assistant integration availability check - `urljoin()` was incorrectly removing `/core` from supervisor URL, causing API calls to fail at `http://supervisor/api/` instead of `http://supervisor/core/api/`. This prevented the `/api/v1/train/device` endpoint from working even though the addon was properly initialized with supervisor token.
